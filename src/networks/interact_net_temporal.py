@@ -11,8 +11,7 @@ from torchvision import models
 import torchvision.transforms.functional as TF
 
 from src.utils import pair, build_2d_sincos_posemb
-from src.networks.adaptor_modules import InteractionBlock
-
+from src.networks.adaptor_modules import InteractionBlock, CoAttCrossAttention
 
 # ==================================================================================================================== #
 #                                                INTERACT-NET ARCHITECTURE                                                #
@@ -121,13 +120,33 @@ class InteractNet(nn.Module):
         # temporal position projection layer
         self.temp_emb_new = nn.Parameter(torch.zeros(window_size, gaze_feature_dim))   # final used
 
+        # initialize coatt_emb with N(0, 1)
+        self.coatt_dim = proj_feature_dim * len(self.interaction_indexes)
+        self.coatt_emb = nn.Parameter(torch.randn(1, 1, self.num_coatt, self.coatt_dim))  # (1, 1, num_coatt, D)
+
         # joint attention layer
-        self.coatt_dim = token_dim
-        self.coatt_emb = nn.Parameter(torch.zeros(1, 1, self.num_coatt, self.coatt_dim))
         self.people_coatt_interaction = nn.Sequential(*[
-            TransformerBlock(dim=self.coatt_dim, num_heads=encoder_num_heads, mlp_ratio=0.25, drop_path_rate=0.3)
+            TransformerBlock(dim=self.coatt_dim, num_heads=8, mlp_ratio=0.25, drop_path_rate=0.3)
             for i in range(len(self.interaction_indexes))
         ])
+        # self.people_coatt_interaction = nn.Sequential(*[
+            # CoattTransformerDecoderBlock(dim=self.coatt_dim, num_heads=encoder_num_heads, mlp_ratio=0.25, drop_path_rate=0.3)
+            # for i in range(len(self.interaction_indexes))
+        # ])
+
+        self.coatt_token_ffn = nn.Sequential(
+            nn.LayerNorm(self.coatt_dim),
+            nn.Linear(self.coatt_dim, self.coatt_dim),
+            nn.GELU(),
+            nn.Linear(self.coatt_dim, self.coatt_dim),
+        )
+
+        self.person_tokens_ffn = nn.Sequential(
+            nn.LayerNorm(self.coatt_dim),
+            nn.Linear(self.coatt_dim, self.coatt_dim),
+            nn.GELU(),
+            nn.Linear(self.coatt_dim, self.coatt_dim),
+        )
 
         # projection layers for social gaze prediction
         self.gaze_projs = nn.Sequential(*[
@@ -215,28 +234,28 @@ class InteractNet(nn.Module):
         coatt_tokens = self.coatt_emb
         coatt_tokens = coatt_tokens.view(1, 1, self.num_coatt, self.coatt_dim)
         coatt_tokens = coatt_tokens.expand(b, t, self.num_coatt, self.coatt_dim)  # (b, t, coatt_num, D)
-        person_tokens_final = gaze_layers[-1].view(b, t, n, -1) # (b, t, n, D)
-        coatt_tokens_cat = torch.cat([coatt_tokens, person_tokens_final], dim=-2)
-        coatt_tokens_cat = coatt_tokens_cat.reshape(b*t, self.num_coatt+n, self.coatt_dim)
-
-        # coatt_person_tokens = self.people_coatt_interaction[-1](coatt_tokens_cat)  # (b*t, coatt_num+n, D)
-        for i in range(len(self.people_coatt_interaction)):
-            coatt_person_tokens = self.people_coatt_interaction[i](coatt_tokens_cat)
+        coatt_tokens = coatt_tokens.view(b*t, self.num_coatt, self.coatt_dim)  # (b*t, coatt_num, D)
 
         # estimate coatt level by multiplying coatt_tokens_up and person_tokens_up
-        coatt_tokens_up = coatt_person_tokens[:, :self.num_coatt, :]  # (b*t, coatt_num, D)
-        coatt_tokens_up_norm = F.normalize(coatt_tokens_up, dim=-1)  # normalize along the last dimension
-        person_tokens_up = coatt_person_tokens[:, self.num_coatt:, :]  # (b*t, n, D)
-        person_tokens_up_norm = F.normalize(person_tokens_up, dim=-1)
-        coatt_level_wo_sig = torch.einsum('btd,bnd->btn', coatt_tokens_up_norm, person_tokens_up_norm)  # (b*t, coatt_num, n)
-        coatt_level = torch.sigmoid(coatt_level_wo_sig)  # apply sigmoid to get co-attention level
-        assert torch.max(coatt_level.view(-1)) <= 1.0 and torch.min(coatt_level.view(-1)) >= 0.0, "Co-attention level values are out of bounds!"
+        person_tokens_coatt = person_tokens.view(b*t, n, self.coatt_dim)  # (b*t, n, D)
+
+        coatt_person_tokens = torch.cat([coatt_tokens, person_tokens_coatt], dim=1)  # (b*t, coatt_num+n, D)
+        for i in range(len(self.people_coatt_interaction)):
+            coatt_person_tokens = self.people_coatt_interaction[i](coatt_person_tokens)
+
+        coatt_tokens = coatt_person_tokens[:, :self.num_coatt, :]  # (b*t, coatt_num, D)
+        person_tokens_coatt = coatt_person_tokens[:, self.num_coatt:, :]  # (b*t, n, D)
+        coatt_tokens_emb = self.coatt_token_ffn(coatt_tokens)
+        person_tokens_coatt_emb = self.person_tokens_ffn(person_tokens_coatt)
+
+        coatt_level = torch.einsum('btd,bnd->btn', coatt_tokens_emb, person_tokens_coatt_emb)
+        coatt_level_w_prob = torch.sigmoid(coatt_level)
 
         # Predict Coatt Heatmap by multiplying coatt_level and gaze_hm
         if self.output=='heatmap':
             gaze_hm_view = gaze_hm.view(b, t, 1, n, hm_height, hm_width)
-            coatt_level_view = coatt_level.view(b, t, self.num_coatt, n, 1, 1)
-            coatt_hm = gaze_hm_view * coatt_level_view  # (b, t, coatt_num, n, hm_height, hm_width)
+            coatt_level_w_prob_view = coatt_level_w_prob.view(b, t, self.num_coatt, n, 1, 1)
+            coatt_hm = gaze_hm_view * coatt_level_w_prob_view  # (b, t, coatt_num, n, hm_height, hm_width)
             coatt_hm = coatt_hm.mean(dim=3)  # average over people dimension
         
         # Classify inout ====================================================
@@ -273,6 +292,7 @@ class InteractNet(nn.Module):
             out['coatt'] = coatt.view(b, t, num_pairs)
             out['coatt_hm'] = coatt_hm
             out['coatt_level'] = coatt_level.view(b, t, self.num_coatt, n)
+
             return out
         else:
             assert False, 'Incorrect output type selected!!!'
@@ -565,6 +585,7 @@ class InteractNet(nn.Module):
 #                      GAZE ENCODER                      #
 # ****************************************************** #
 class GazeEncoder(nn.Module):
+
     def __init__(self, token_dim=768, feature_dim=512):
         super().__init__()
 
@@ -976,7 +997,25 @@ class TransformerBlock(nn.Module):
         x = x + self.drop_path(self.attn(self.norm1(x), print_att))
         x = x + self.drop_path(self.mlp(self.norm2(x)))
         return x
-    
+
+# coatt transformer decoder block
+class CoattTransformerDecoderBlock(nn.Module):
+    def __init__(self, dim, num_heads=8, mlp_ratio=4., use_kv_bias=False, use_q_bias=False, attn_drop_rate=0., proj_drop_rate=0., drop_path_rate=0.):
+        super().__init__()
+
+        self.norm1 = nn.LayerNorm(dim, eps=1e-6)
+        self.cross_attn = CoAttCrossAttention(dim, num_heads=num_heads, use_kv_bias=use_kv_bias, use_q_bias=use_q_bias)
+        self.drop_path = DropPath(drop_path_rate) if drop_path_rate > 0. else nn.Identity()
+        self.norm2 = nn.LayerNorm(dim, eps=1e-6)
+        self.mlp = MLP(in_features=dim, hidden_features=int(dim * mlp_ratio), drop_rate=proj_drop_rate)
+
+    # cross attention for coatt tokens to obtain the information from gaze tokens
+    def forward(self, coatt_tokens, gaze_tokens):
+        # gaze_tokens: (b, n, d), coatt_tokens: (b, m, d)
+        # where b = batch size, n = number of people, m = number of coatt tokens, d = token dimension
+        coatt_tokens = coatt_tokens + self.drop_path(self.cross_attn(self.norm1(coatt_tokens), gaze_tokens))
+        coatt_tokens = coatt_tokens + self.drop_path(self.mlp(self.norm2(coatt_tokens)))
+        return coatt_tokens
 
 class MLP(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, drop_rate=0.):

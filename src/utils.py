@@ -296,6 +296,11 @@ def generate_coatt_heatmap(gaze_hms: torch.Tensor, coatt_ids: torch.Tensor, num_
 
     device = gaze_hms.device
     coatt_id_set = set(coatt_ids.tolist())
+
+    # remove 0 from coatt_id_set because it is a padded id
+    if 0 in coatt_id_set:
+        coatt_id_set.remove(0)
+
     heatmaps = []
     coatt_levels = []
     for coatt_id in coatt_id_set:
@@ -541,6 +546,7 @@ def id_to_pairwise_coatt(coatt_ids):
         j = indices[k, 1]
         pairwise_coatt[:, k] = is_coatt(coatt_ids[:, i], coatt_ids[:, j])
         mask[:, k] = (coatt_ids[:, i] != 0) & (coatt_ids[:, j] != 0) & ((coatt_ids[:,i]!=-100) | (coatt_ids[:,j]!=-100))
+        # mask[:, k] = ((coatt_ids[:,i]!=-100) | (coatt_ids[:,j]!=-100))
         
     return pairwise_coatt, mask
 

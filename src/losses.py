@@ -128,11 +128,16 @@ def compute_coatt_loss(coatt_hm_gt, coatt_hm_pred, coatt_level_gt, coatt_level_p
     coatt_hm_gt = coatt_hm_gt.view(b*t, coatt_num, h*w)
     coatt_hm_pred = coatt_hm_pred.view(b*t, coatt_num, h*w)
     cost_matrix_hm = torch.cdist(coatt_hm_gt, coatt_hm_pred, p=2)
+    # print('cost_matrix_hm', cost_matrix_hm.shape)
 
-    # compute cost matrix for coatt levels
-    coatt_level_gt = coatt_level_gt.view(b*t, coatt_num, -1)
-    coatt_level_pred = coatt_level_pred.view(b*t, coatt_num, -1)
-    cost_matrix_level = torch.cdist(coatt_level_gt.float(), coatt_level_pred.float(), p=2)
+    # compute cost matrix for coatt binary classification (bce loss, b*t, coatt_num, coatt_num)
+    coatt_level_gt = coatt_level_gt.view(b*t, coatt_num, -1)  # (b*t, coatt_num, people_num)
+    coatt_level_pred = coatt_level_pred.view(b*t, coatt_num, -1)  # (b*t, coatt_num, people_num)
+    coatt_level_gt_expand = coatt_level_gt.unsqueeze(2).expand(-1, -1, coatt_level_gt.shape[1], -1).float()  # (b*t, coatt_num, coatt_num, people_num)
+    coatt_level_pred_expand = coatt_level_pred.unsqueeze(1).expand(-1, coatt_level_pred.shape[1], -1, -1)  # (b*t, coatt_num, coatt_num, people_num)
+    bce_loss = F.binary_cross_entropy_with_logits(coatt_level_pred_expand, coatt_level_gt_expand, reduction="none")
+    cost_matrix_level = bce_loss.mean(dim=-1)  # average over people_num dimension
+    # print('cost_matrix_level', cost_matrix_level.shape)
 
     # combine all cost matrices
     cost_matrix = cost_matrix_hm + cost_matrix_level

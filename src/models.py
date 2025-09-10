@@ -16,6 +16,8 @@ import wandb
 from termcolor import colored
 from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau, CosineAnnealingWarmRestarts, StepLR, MultiStepLR
 from timm.scheduler import CosineLRScheduler
+import cv2
+from PIL import Image
 
 from src.losses import compute_chong_loss, compute_sharingan_loss, compute_rinnegan_loss, compute_social_loss, compute_interact_loss, compute_inout_loss, compute_coatt_loss
 from src.metrics import AUC, Distance, GFTestAUC, GFTestDistance
@@ -349,34 +351,36 @@ class InteractModel(pl.LightningModule):
                 loss_dist, logs_dist = self.compute_hm_loss(batch["gaze_vecs"].view(batch_size*t, n, -1), batch["gaze_heatmaps"].view(batch_size*t, n, hm_h, hm_w), batch["inout"].view(batch_size*t, -1), gaze_vec_pred, gaze_hm_pred, inout_pred)    # 2d gaze angle loss
         else:
             loss_dist, logs_dist = self.compute_dist_loss(batch["gaze_vecs"], batch["gaze_pts"], batch["inout"].view(batch_size*t, -1), gaze_vec_pred, gaze_pt_pred, inout_pred)
-        
         loss = loss_dist
-        # Compute social gaze loss
-        if self.model_name in ['gaze_interact', 'sharingan_social']:
-            # coatt_gt, coatt_mask = id_to_pairwise_coatt(batch["coatt_ids"].view(batch_size*t, -1))
-            # laeo_gt, laeo_mask = id_to_pairwise_laeo(batch["laeo_ids"].view(batch_size*t, -1))
-            # lah_gt, lah_mask = id_to_pairwise_lah(batch["lah_ids"].view(batch_size*t, -1))
-            # loss_social, logs_social = self.compute_social_loss(lah_pred, lah_gt, lah_mask, laeo_pred, laeo_gt, laeo_mask, coatt_pred, coatt_gt, coatt_mask)
-            # loss += loss_social  
+
+        if self.cfg.train.social_loss:
+            # Compute social gaze loss
+            coatt_gt, coatt_mask = id_to_pairwise_coatt(batch["coatt_ids"].view(batch_size*t, -1))
+            laeo_gt, laeo_mask = id_to_pairwise_laeo(batch["laeo_ids"].view(batch_size*t, -1))
+            lah_gt, lah_mask = id_to_pairwise_lah(batch["lah_ids"].view(batch_size*t, -1))
+            loss_social, logs_social = self.compute_social_loss(lah_pred, lah_gt, lah_mask, laeo_pred, laeo_gt, laeo_mask, coatt_pred, coatt_gt, coatt_mask)
+            loss += loss_social  
         
             # Log Social Gaze Losses
-            # self.log("loss/train/lah", logs_social["lah_loss"], batch_size=lah_mask.sum(), prog_bar=True, on_step=True, on_epoch=True)
-            # self.log("loss/train/laeo", logs_social["laeo_loss"], batch_size=laeo_mask.sum(), prog_bar=True, on_step=True, on_epoch=True)
-            # self.log("loss/train/coatt", logs_social["coatt_loss"], batch_size=coatt_mask.sum(), prog_bar=True, on_step=True, on_epoch=True)
+            self.log("loss/train/lah", logs_social["lah_loss"], batch_size=lah_mask.sum(), prog_bar=True, on_step=True, on_epoch=True)
+            self.log("loss/train/laeo", logs_social["laeo_loss"], batch_size=laeo_mask.sum(), prog_bar=True, on_step=True, on_epoch=True)
+            self.log("loss/train/coatt", logs_social["coatt_loss"], batch_size=coatt_mask.sum(), prog_bar=True, on_step=True, on_epoch=True)
             
+        if self.cfg.train.coatt_loss:
             # Compute coatt loss
+            coatt_ids = batch['coatt_ids']
             coatt_hm_gt = batch['coatt_heatmaps']
             coatt_level_gt = batch['coatt_levels']
             coatt_loss, logs_coatt = self.compute_coatt_loss(coatt_hm_gt, coatt_hm_pred, coatt_level_gt, coatt_level_pred)
             loss += coatt_loss
-            
+
             # Log Coatt Losses
             self.log("loss/train/coatt_hm", logs_coatt["coatt_hm_loss"], batch_size=ni, prog_bar=False, on_step=True, on_epoch=True)
             self.log("loss/train/coatt_level", logs_coatt["coatt_level_loss"], batch_size=ni, prog_bar=False, on_step=True, on_epoch=True)
 
         # Logging Distance, InOut losses
         self.log("loss/train/heatmap", logs_dist["heatmap_loss"], batch_size=ni, prog_bar=False, on_step=True, on_epoch=True)
-        self.log("loss/train/dist", logs_dist["dist_loss"], batch_size=ni, prog_bar=False, on_step=True, on_epoch=True)
+        # self.log("loss/train/dist", logs_dist["dist_loss"], batch_size=ni, prog_bar=False, on_step=True, on_epoch=True)
         self.log("loss/train/angular", logs_dist["angular_loss"], batch_size=ni, prog_bar=False, on_step=True, on_epoch=True)
         self.log("loss/train/inout", logs_dist["inout_loss"], batch_size=n, prog_bar=False, on_step=True, on_epoch=True)
         self.log("loss/train", loss.item(), batch_size=n, prog_bar=True, on_step=True, on_epoch=True)
@@ -430,7 +434,7 @@ class InteractModel(pl.LightningModule):
         loss = loss_dist
         # Logging losses
         self.log("loss/val/heatmap", logs_dist["heatmap_loss"], batch_size=ni, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("loss/val/dist", logs_dist["dist_loss"], batch_size=ni, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
+        # self.log("loss/val/dist", logs_dist["dist_loss"], batch_size=ni, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
         self.log("loss/val/angular", logs_dist["angular_loss"], batch_size=ni, prog_bar=False, on_step=True, on_epoch=True, sync_dist=True)
         self.log("loss/val/inout", logs_dist["inout_loss"], batch_size=n, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
         self.log("loss/val", loss.item(), batch_size=n, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
@@ -441,62 +445,65 @@ class InteractModel(pl.LightningModule):
         # self.log("metric/val/auc", self.metrics["val_auc"], batch_size=ni, prog_bar=True, on_step=False, on_epoch=True)
         self.log("metric/val/dist", self.metrics["val_dist"], batch_size=ni, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
         
-        # Compute social gaze loss
-        if self.model_name in ['gaze_interact', 'sharingan_social']:
+        if self.cfg.train.social_loss:
+            # Compute social gaze loss
             coatt_gt, coatt_mask = id_to_pairwise_coatt(batch["coatt_ids"][:,middle_frame_idx,:])
             laeo_gt, laeo_mask = id_to_pairwise_laeo(batch["laeo_ids"][:,middle_frame_idx,:])
             lah_gt, lah_mask = id_to_pairwise_lah(batch["lah_ids"][:,middle_frame_idx,:])
-            # loss_social, logs_social = self.compute_social_loss(lah_pred, lah_gt, lah_mask, laeo_pred, laeo_gt, laeo_mask, coatt_pred, coatt_gt, coatt_mask)
-            # loss += loss_social        
+            loss_social, logs_social = self.compute_social_loss(lah_pred, lah_gt, lah_mask, laeo_pred, laeo_gt, laeo_mask, coatt_pred, coatt_gt, coatt_mask)
+            loss += loss_social        
             coatt_gt = torch.where(coatt_mask, coatt_gt, torch.tensor(-1., device=coatt_mask.device)).int()
             laeo_gt = torch.where(laeo_mask, laeo_gt, torch.tensor(-1., device=laeo_mask.device)).int()
             lah_gt = torch.where(lah_mask, lah_gt, torch.tensor(-1., device=lah_mask.device)).int()
         
             # Log Social Gaze Losses
-            # self.log("loss/val/lah", logs_social["lah_loss"], batch_size=lah_mask.sum(), prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
-            # self.log("loss/val/laeo", logs_social["laeo_loss"], batch_size=laeo_mask.sum(), prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
-            # self.log("loss/val/coatt", logs_social["coatt_loss"], batch_size=coatt_mask.sum(), prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
+            self.log("loss/val/lah", logs_social["lah_loss"], batch_size=lah_mask.sum(), prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
+            self.log("loss/val/laeo", logs_social["laeo_loss"], batch_size=laeo_mask.sum(), prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
+            self.log("loss/val/coatt", logs_social["coatt_loss"], batch_size=coatt_mask.sum(), prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
 
+            # Update LAEO metrics
+            if laeo_pred.sum()!=0:
+                laeo_pred = torch.sigmoid(laeo_pred)
+                if laeo_mask.sum()>0:
+                    self.val_laeo_auc(laeo_pred, laeo_gt)
+                    self.val_laeo_ap(laeo_pred, laeo_gt)
+
+                    self.log("metric/val/laeo_auc", self.val_laeo_auc, batch_size=laeo_mask.sum(), prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+                    self.log("metric/val/laeo_ap", self.val_laeo_ap, batch_size=laeo_mask.sum(), prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+            
+            # Update LAH metrics
+            if lah_pred.sum()!=0:
+                lah_pred = torch.sigmoid(lah_pred)
+                if lah_mask.sum()>0:
+                    self.val_lah_auc(lah_pred, lah_gt)
+                    self.val_lah_ap(lah_pred, lah_gt)
+
+                    self.log("metric/val/lah_auc", self.val_lah_auc, batch_size=lah_mask.sum(), prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+                    self.log("metric/val/lah_ap", self.val_lah_ap, batch_size=lah_mask.sum(), prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+
+        if self.cfg.train.coatt_loss:
             # Compute coatt loss
             coatt_hm_gt = batch['coatt_heatmaps'][:,middle_frame_idx,:,:,:]
             coatt_levels_gt = batch['coatt_levels'][:,middle_frame_idx,:,:]
             coatt_loss, logs_coatt = self.compute_coatt_loss(coatt_hm_gt, coatt_hm_pred, coatt_levels_gt, coatt_level_pred)
+            loss += coatt_loss
 
             # Log Coatt Losses
-            loss += coatt_loss
             self.log("loss/val/coatt_hm", logs_coatt["coatt_hm_loss"], batch_size=ni, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
             self.log("loss/val/coatt_level", logs_coatt["coatt_level_loss"], batch_size=ni, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
-        
+    
         # Update CoAtt Metrics
-        if coatt_pred.sum()!=0:
-            coatt_pred = torch.sigmoid(coatt_pred)
-            if coatt_mask.sum()>0:
-                self.val_coatt_auc(coatt_pred, coatt_gt)
-                self.val_coatt_ap(coatt_pred, coatt_gt)
+        if self.cfg.train.social_loss:
+            if coatt_pred.sum()!=0:
+                coatt_pred = torch.sigmoid(coatt_pred)
+                if coatt_mask.sum()>0:
+                    self.val_coatt_auc(coatt_pred, coatt_gt)
+                    self.val_coatt_ap(coatt_pred, coatt_gt)
 
-                self.log("metric/val/coatt_auc", self.val_coatt_auc, batch_size=coatt_mask.sum(), prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
-                self.log("metric/val/coatt_ap", self.val_coatt_ap, batch_size=coatt_mask.sum(), prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
-        
-        # Update LAEO metrics
-        if laeo_pred.sum()!=0:
-            laeo_pred = torch.sigmoid(laeo_pred)
-            if laeo_mask.sum()>0:
-                self.val_laeo_auc(laeo_pred, laeo_gt)
-                self.val_laeo_ap(laeo_pred, laeo_gt)
+                    self.log("metric/val/coatt_auc", self.val_coatt_auc, batch_size=coatt_mask.sum(), prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+                    self.log("metric/val/coatt_ap", self.val_coatt_ap, batch_size=coatt_mask.sum(), prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+            
 
-                self.log("metric/val/laeo_auc", self.val_laeo_auc, batch_size=laeo_mask.sum(), prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
-                self.log("metric/val/laeo_ap", self.val_laeo_ap, batch_size=laeo_mask.sum(), prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
-        
-        # Update LAH metrics
-        if lah_pred.sum()!=0:
-            lah_pred = torch.sigmoid(lah_pred)
-            if lah_mask.sum()>0:
-                self.val_lah_auc(lah_pred, lah_gt)
-                self.val_lah_ap(lah_pred, lah_gt)
-
-                self.log("metric/val/lah_auc", self.val_lah_auc, batch_size=lah_mask.sum(), prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
-                self.log("metric/val/lah_ap", self.val_lah_ap, batch_size=lah_mask.sum(), prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
-        
     def test_step(self, batch, batch_idx):
         ni = int((batch["inout"]==1).sum().item())
 #         assert n == ni, f"Expected all test samples to be looking inside. Got {n} samples, {ni} of which are looking inside."
@@ -531,7 +538,7 @@ class InteractModel(pl.LightningModule):
         coatt_pred = coatt_pred[:,middle_frame_idx,:]
         coatt_hm_pred = coatt_hm_pred[:,middle_frame_idx,:,:,:]
         coatt_level_pred = coatt_level_pred[:,middle_frame_idx,:,:]
-        
+
         # Update distance metrics
         if self.cfg.experiment.dataset=='gazefollow':
             gaze_vec_pred = gaze_vec_pred[:, -1, :]  # (b, n, 2) >> (b, 2)
@@ -553,7 +560,21 @@ class InteractModel(pl.LightningModule):
             if self.output=='heatmap':
                 test_auc = self.metrics["test_auc"](gaze_hm_pred.reshape(batch_size*num_people, hm_h, hm_w), batch["gaze_heatmaps"][:,middle_frame_idx,:,:,:].reshape(batch_size*num_people, hm_h, hm_w), inout_gt.reshape(batch_size*num_people, -1))
                 self.log("metric/test/auc", test_auc, batch_size=ni, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
-            self.metrics["test_dist"].update(gaze_pt_pred, batch["gaze_pts"][:,middle_frame_idx,:, :], inout_gt)
+            
+            # self.metrics["test_dist"].update(gaze_pt_pred, batch["gaze_pts"][:,middle_frame_idx,:, :], inout_gt)
+            
+            gaze_pt_pred_mask = gaze_pt_pred
+            gaze_pt_gt_mask = batch["gaze_pts"][:,middle_frame_idx,:, :]
+            
+            pt_gt_mask = torch.sum(gaze_pt_gt_mask==-1, dim=-1) != 2
+            gaze_pt_pred_mask = gaze_pt_pred_mask[pt_gt_mask]
+            gaze_pt_gt_mask = gaze_pt_gt_mask[pt_gt_mask]
+
+            inout_gt = inout_gt == 1
+            mask = inout_gt | pt_gt_mask
+            mask = torch.where(mask==True, 1, -1)
+
+            self.metrics["test_dist"].update(gaze_pt_pred, batch["gaze_pts"][:,middle_frame_idx,:, :], mask)
             self.log("metric/test/dist", self.metrics["test_dist"], batch_size=ni, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
         
         coatt_gt, coatt_mask = id_to_pairwise_coatt(batch["coatt_ids"][:,middle_frame_idx,:])
@@ -562,16 +583,43 @@ class InteractModel(pl.LightningModule):
         laeo_gt = torch.where(laeo_mask, laeo_gt, torch.tensor(-1., device=laeo_mask.device)).int()
         lah_gt, lah_mask = id_to_pairwise_lah(batch["lah_ids"][:,middle_frame_idx,:])
         lah_gt = torch.where(lah_mask, lah_gt, torch.tensor(-1., device=lah_mask.device)).int()
+
         # Update CoAtt Metrics
         if coatt_pred.sum()!=0:
             coatt_pred = torch.sigmoid(coatt_pred)
+
             if coatt_mask.sum()>0:
                 self.test_coatt_auc(coatt_pred, coatt_gt)
                 self.test_coatt_ap(coatt_pred, coatt_gt)
-
                 self.log("metric/test/coatt_auc", self.test_coatt_auc, batch_size=coatt_mask.sum(), prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
                 self.log("metric/test/coatt_ap", self.test_coatt_ap, batch_size=coatt_mask.sum(), prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
-        
+
+        # if 'coatt_heatmaps' in batch and 'coatt_levels' in batch and batch_idx % 50 == 0:
+            # coatt_hm_gt = batch['coatt_heatmaps'][:,middle_frame_idx,:,:,:]
+            # coatt_levels_gt = batch['coatt_levels'][:,middle_frame_idx,:,:]
+            # print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+
+            # for token_idx in range(coatt_levels_gt.shape[1]):
+            #     coatt_hm_gt_token = coatt_hm_gt[0, token_idx, :, :]
+            #     # save coatt heatmap gt as an image
+            #     coatt_hm_gt_token_np = (coatt_hm_gt_token.cpu().numpy() * 255).astype(np.uint8)
+            #     coatt_hm_gt_token_pil = Image.fromarray(coatt_hm_gt_token_np)
+            #     coatt_hm_gt_token_pil.save(f"vis/coatt_hm_gt_token_{token_idx}.png")
+            # print(coatt_hm_gt.shape, coatt_hm_pred.shape, coatt_levels_gt.shape, coatt_level_pred.shape)
+            # sys.exit()
+
+            # for token_idx in range(coatt_levels_gt.shape[1]):
+            #     coatt_level_gt_token = coatt_levels_gt[0, token_idx]
+            #     coatt_level_pred_token = coatt_level_pred[0, token_idx]
+            #     coatt_level_pred_token = torch.sigmoid(coatt_level_pred_token)
+            #     coatt_hm_gt_token = coatt_hm_gt[0, token_idx, :, :]
+            #     coatt_hm_pred_token = coatt_hm_pred[0, token_idx, :, :]
+
+                # if torch.sum(coatt_hm_gt_token) > 0 or torch.sum(coatt_hm_pred_token) > 1.0:
+                    # print(f"Token {token_idx}:")
+                    # print(f"LEV GT {coatt_level_gt_token}, Pred {coatt_level_pred_token}")
+                    # print(f"HM GT sum {coatt_hm_gt_token.sum()}, Pred sum {coatt_hm_pred_token.sum()}")
+
         pair_indices = torch.tensor(list(itertools.permutations(torch.arange(num_people), 2)))
         # Update LAEO metrics
         if laeo_pred.sum()!=0:
@@ -633,7 +681,7 @@ class InteractModel(pl.LightningModule):
                   "gv_pred": gaze_vec_pred, 
                   "gv_gt": batch["gaze_vecs"][:,middle_frame_idx,:, :],
                 #   # optionally save gaze heatmaps
-                #   "hm_pred": gaze_hm_pred,
+                  "hm_pred": gaze_hm_pred,
                 #   "hm_gt": batch["gaze_heatmaps"][:,middle_frame_idx,:,:,:],
                   "inout_gt": inout_gt, 
                   "path": batch["path"],
@@ -641,6 +689,7 @@ class InteractModel(pl.LightningModule):
                   "coatt_pred": coatt_pred,
                   "coatt_hm_pred": coatt_hm_pred,
                   "coatt_level_pred": coatt_level_pred,
+                  "coatt_level_gt": batch['coatt_levels'][:,middle_frame_idx,:,:],
                   "laeo_pred": laeo_pred,
                   "lah_pred": lah_pred,
                   "coatt_gt": coatt_gt,

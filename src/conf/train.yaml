@@ -13,16 +13,16 @@ project:
 experiment:
     name: MTGS-NK #rinn-hgaze-n1-multivit-gaze_vec-ep15-amp
     group: null # /!\
-    task: test # combination of {train, val, test, predict} separated by '+' sign. TODO: train+predict # /!\
-    dataset: videocoatt # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
+    task: train # combination of {train, val, test, predict} separated by '+' sign. TODO: train+predict # /!\
+    dataset: combined_social # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
     path: ${hydra:runtime.cwd} # to retrieve logs and checkpoints
-    cuda: 2
+    cuda: 1
 
 # ------------------------------------------------------------------------------------------------------------------- #
 
 data:
     num_samples: 36000    # GazeFollow: 108955, VAT: 9000, childplay: 15000, combined_social: 36000, laeo: 2900
-    num_people: 20 # /!\ int or -1 for all
+    num_people: 30 # /!\ int or -1 for all
     num_coatt: 30
     return_depth: False # /!\
     return_head_mask: False # /!\
@@ -38,18 +38,17 @@ data:
         root_depth: None
         root_focal: None
     coatt:
-        # root: /idiap/resource/database/VideoCoAtt_Dataset
         root: data/VideoCoAtt_Dataset
-    # vat:
-    #     root: /idiap/resource/database/VideoAttentionTarget
-    # laeo:
-    #     root: /idiap/home/nchutisilp/UCO-LAEO/
-    # childplay:
-    #     root: /idiap/temp/stafasca/data/ChildPlay
-    #     root_depth: None
-    #     root_focal: None
-    # vacation:
-    #     root: /idiap/temp/agupta/data/VACATION
+    vat:
+        root: /home-local/nakatani/dataset/videoattentiontarget
+    laeo:
+        root: /home-local/nakatani/dataset/ucolaeodb/
+    childplay:
+        root: /home-local/nakatani/dataset/ChildPlay-gaze
+        root_depth: None
+        root_focal: None
+    vacation:
+        root: /idiap/temp/agupta/data/VACATION
 
 # ------------------------------------------------------------------------------------------------------------------- #
 
@@ -83,7 +82,7 @@ model:
 
 optimizer:
     type: AdamW # not used
-    lr: 1e-6 # /!\ 3e-6 (default)
+    lr: 3e-6 # /!\ 3e-6 (default)
     weight_decay: 1e-3 # /!\
 
 # ------------------------------------------------------------------------------------------------------------------- #
@@ -100,12 +99,16 @@ train:
     seed: 101 # /!\
     matmul_precision: medium # /!\ highest (default), high, medium
     precision: bf16-mixed # /!\ 64 (double), 32 (full), 16 (16bit mixed), bf16-mixed (bfloat16 mixed). Defaults to 32.
-    epochs: 20 # /!\
-    batch_size: 8 # /!\
+    epochs: 40 # /!\
+    batch_size: 16 # /!\
     accumulate_grad_batches: 1 # /!\
     device: cuda
-    resume: False
-    resume_from: /idiap/temp/agupta/src/gaze_interact/checkpoints/last.ckpt
+    # resume: False
+    resume: True
+    # resume_from: /idiap/temp/agupta/src/gaze_interact/checkpoints/last.ckpt
+    # resume_from: "/home/nakatani/joint_attention_project/mtgs/checkpoints/gazefollow/2025-09-02/14-07-08_COA_False_SOC_False/best.ckpt"
+    resume_from: "/home/nakatani/joint_attention_project/mtgs/checkpoints/gazefollow/2025-09-09/14-12-44_COA_False_SOC_True/best.ckpt"
+
     freeze:
         gaze_encoder: False  # /!\
         gaze_encoder_backbone: False # /!\
@@ -120,6 +123,9 @@ train:
         lr: [1e-6, 1e-6, 1e-6, 1e-6, 3e-7] # /!\ {1e-6, [3e-6, 3e-6, 1e-6]} float, or list of floats for each param group in optimizer
         epoch_start: 12 # /!\
         annealing_epochs: 6 # /!\
+    # coatt_loss: False # /!\ True, False
+    coatt_loss: True # /!\ True, False
+    social_loss: False # /!\ True, False
 
 # ------------------------------------------------------------------------------------------------------------------- #
 
@@ -131,13 +137,7 @@ val:
 # ------------------------------------------------------------------------------------------------------------------- #
 
 test:
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-09-09/10-11-19_COA_True_SOC_True/best.ckpt"
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-09-09/20-34-32_COA_True_SOC_True/best.ckpt"
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-09-09/20-34-32_COA_True_SOC_True/last.ckpt"
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-09-10/11-04-55_COA_True_SOC_True/best.ckpt"
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-09-10/11-04-55_COA_True_SOC_True/last.ckpt"
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-09-10/14-20-06_COA_True_SOC_False/best.ckpt"
-    checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-09-10/14-20-06_COA_True_SOC_False/last.ckpt"
+    checkpoint: "/remote/idiap.svm/temp.perception02/agupta/src/gaze_interact/experiments/2024-03-06/10-24-16/checkpoints/best.ckpt"
     batch_size: 1 # /!\
     device: ${train.device}
 

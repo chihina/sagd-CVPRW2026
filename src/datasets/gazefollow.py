@@ -261,6 +261,12 @@ class GazeFollowDataset(Dataset):
         self.return_depth = return_depth
         self.return_head_mask = return_head_mask
         self.annotations, self.paths = self.load_annotations()
+
+        # Use a subset of the data for debugging
+        # use_ratio = 0.1
+        use_ratio = 1.0
+        self.paths = self.paths[:int(len(self.paths) * use_ratio)]
+
         self.length = len(self.paths)
         
 #         # ======== for VLM context =========
@@ -298,15 +304,28 @@ class GazeFollowDataset(Dataset):
             paths = list(annotations.groups.keys())
 
         elif self.split in ["train", "val"]:
+            """
             column_names = ["path", "id", "body_bbox_x", "body_bbox_y", "body_bbox_w", "body_bbox_h", "eye_x", "eye_y", 
                             "gaze_x", "gaze_y", "head_xmin", "head_ymin", "head_xmax", "head_ymax", "inout", "origin", "meta"]
             annotations = pd.read_csv(
-                os.path.join(f"/idiap/temp/agupta/data/attention/gazefollow/{self.split}_annotations_new.txt"),
+                os.path.join(self.root, f"{self.split}_annotations.txt"),
                 sep=",",
                 names=column_names,
                 index_col=False,
                 encoding="utf-8-sig",
             )
+            """
+
+            column_names = ["path", "id", "body_bbox_x", "body_bbox_y", "body_bbox_w", "body_bbox_h", "eye_x", "eye_y", 
+                            "gaze_x", "gaze_y", "head_xmin", "head_ymin", "head_xmax", "head_ymax", "inout", "origin", "meta"]
+            annotations = pd.read_csv(
+                os.path.join(self.root, f"train_annotations_release.txt"),
+                sep=",",
+                names=column_names,
+                index_col=False,
+                encoding="utf-8-sig",
+            )
+
             
             # Clean annotations (e.g. remove invalid ones)
             annotations = self._clean_annotations(annotations)
@@ -372,6 +391,7 @@ class GazeFollowDataset(Dataset):
             gaze_pts = gaze_pts[rand_indices]
             inout = inout[rand_indices]
         
+        '''
         # Get detected head bboxes
         split, folder, img_name = path.split("/")
         basename, ext = os.path.splitext(img_name)
@@ -396,7 +416,8 @@ class GazeFollowDataset(Dataset):
             if self.split!='test':
                 gaze_pts = torch.cat([torch.zeros((len(det_head_bboxes), 2))-1, gaze_pts])
                 inout = torch.cat([torch.zeros(len(det_head_bboxes), dtype=torch.float32)-1, inout])
-                
+        '''
+
 #         #--------------------------------------------------------------------------------
 #         # Match VLM scores with people
 #         vlm_context = self.loaded_vlm_context[path]

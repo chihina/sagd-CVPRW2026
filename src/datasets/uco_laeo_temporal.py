@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 from torchvision.ops import box_iou
 
-from src.utils import Stage, square_bbox, generate_gaze_heatmap, laeo2lah, generate_mask
+from src.utils import Stage, square_bbox, generate_gaze_heatmap, laeo2lah, generate_mask, generate_coatt_heatmap
 from src.transforms import (
     ColorJitter,
     Compose,
@@ -35,6 +35,7 @@ IMG_STD = [0.28674, 0.27776, 0.27995]
 class VideoLAEODataset_temporal(Dataset):
     def __init__(
         self,
+        cfg,
         root: str,
         split: str = "train",
         stride: int = 1,
@@ -62,13 +63,14 @@ class VideoLAEODataset_temporal(Dataset):
         self.temporal_context = temporal_context
         self.pid_offset = 1000
         self.aspect = aspect
-        
+        self.num_coatt = cfg.data.num_coatt
+
         # load annotations
         self.annotations, self.paths = self.load_annotations()
         
         # load speaking status file
-        self.df_speaking = self.load_annotations_speaker()
-        self.df_speaking = self.df_speaking.groupby('path')
+        # self.df_speaking = self.load_annotations_speaker()
+        # self.df_speaking = self.df_speaking.groupby('path')
         
     def load_annotations_speaker(self):
         annotation_files = glob(os.path.join('/idiap/temp/agupta/data/UCO-LAEO/speaker', f"*.csv"))
@@ -92,15 +94,16 @@ class VideoLAEODataset_temporal(Dataset):
 
     def load_annotations(self):
         # Change to LAEO annotations
-        # annotation_files = sorted(glob(f"/idiap/temp/stafasca/data/VideoCoAtt/annotations/{self.split}/*.csv"))
-        annotation_files = sorted(glob(f"//idiap/temp/agupta/data/UCO-LAEO/ucolaeodb/processed_annotations/{self.split}/*.csv"))
-#         annotation_files = sorted(glob(f"/idiap/home/nchutisilp/laeo_datasets/{self.split}/*.csv"))
+        # annotation_files = sorted(glob(f"data/temp/agupta/data/UCO-LAEO/ucolaeodb/processed_annotations/{self.split}/*.csv"))
 
-        li = []
-        for file in annotation_files:
-            df = pd.read_csv(file, sep=",")
-            li.append(df)
-        annotations = pd.concat(li, axis=0, ignore_index=True)
+        annotation_path = f"data/VSGaze/uco_laeo_{self.split}.h5"
+        annotations = pd.read_hdf(annotation_path)
+
+        # li = []
+        # for file in annotation_files:
+        #     df = pd.read_csv(file, sep=",")
+        #     li.append(df)
+        # annotations = pd.concat(li, axis=0, ignore_index=True)
         
         # group by path
         annotations = annotations.groupby('path')
@@ -141,7 +144,7 @@ class VideoLAEODataset_temporal(Dataset):
         curr_frame_nb = frame
 
         # read current frame
-        img_path = os.path.join(self.root, 'images_Idiap', path)
+        img_path = os.path.join(self.root, path)
         image = Image.open(img_path)  
         img_w, img_h = image.size
         if self.split=='test' and self.aspect:    # to maintain aspect ratio
@@ -156,12 +159,15 @@ class VideoLAEODataset_temporal(Dataset):
         frame_nbs = np.arange(curr_frame_nb-(self.temporal_stride*self.temporal_context), curr_frame_nb+(self.temporal_stride*self.temporal_context)+1, self.temporal_stride)
         
         # get annotated person bboxes
-        head_bboxes = img_annotations[["head_xmin", "head_ymin", "head_xmax", "head_ymax"]]
-        head_bboxes = torch.from_numpy(head_bboxes.values.astype(np.float32))
-        
+        # head_bboxes = img_annotations[["head_xmin", "head_ymin", "head_xmax", "head_ymax"]]
+        # head_bboxes = torch.from_numpy(head_bboxes.values.astype(np.float32))
+        head_bboxes = img_annotations['head_bboxes']
+        head_bboxes = torch.from_numpy(head_bboxes.values[0].astype(np.float32))
+
         # get detected person ids
         pids_det = torch.tensor([])
-        if path in self.df_speaking.groups.keys():
+        # if path in self.df_speaking.groups.keys():
+        if False:
             df_speaking_frame = self.df_speaking.get_group(path)
             det_head_bboxes = np.stack([df_speaking_frame['xmin'].values*img_w, df_speaking_frame['ymin'].values*img_h, df_speaking_frame['xmax'].values*img_w, df_speaking_frame['ymax'].values*img_h], axis=1)
             det_head_bboxes = torch.from_numpy(det_head_bboxes.astype(np.float32))
@@ -229,6 +235,8 @@ class VideoLAEODataset_temporal(Dataset):
                 "gaze_pts": [],
                 "gaze_vecs": [],
                 "gaze_heatmaps": [],
+                "coatt_heatmaps": [],
+                "coatt_levels": [],
                 "lah_ids": [],
                 "laeo_ids": [],
                 "coatt_ids": [],
@@ -266,7 +274,7 @@ class VideoLAEODataset_temporal(Dataset):
                 # Get annotations
                 ###########################################
                 # Load image
-                img_path = os.path.join(self.root, 'images_Idiap', path)
+                img_path = os.path.join(self.root, path)
                 image = Image.open(img_path)  
                 img_w, img_h = image.size
                 
@@ -276,11 +284,14 @@ class VideoLAEODataset_temporal(Dataset):
                 head_bboxes = []
                 if path in self.annotations.groups.keys():
                     img_annotations = self.annotations.get_group(path)
-                    head_bboxes = img_annotations[["head_xmin", "head_ymin", "head_xmax", "head_ymax"]]
-                    head_bboxes = torch.from_numpy(head_bboxes.values.astype(np.float32))
-                
+                    # head_bboxes = img_annotations[["head_xmin", "head_ymin", "head_xmax", "head_ymax"]]
+                    # head_bboxes = torch.from_numpy(head_bboxes.values.astype(np.float32))
+                    head_bboxes = img_annotations['head_bboxes']
+                    head_bboxes = torch.from_numpy(head_bboxes.values[0].astype(np.float32))
+
                 # Get detected head bboxes
-                if path in self.df_speaking.groups.keys():
+                # if path in self.df_speaking.groups.keys():
+                if False:
                     df_speaking_frame = self.df_speaking.get_group(path)
                     det_head_bboxes = np.stack([df_speaking_frame['xmin'].values*img_w, df_speaking_frame['ymin'].values*img_h, df_speaking_frame['xmax'].values*img_w, df_speaking_frame['ymax'].values*img_h], axis=1)
                     det_head_bboxes = torch.from_numpy(det_head_bboxes.astype(np.float32))
@@ -309,6 +320,12 @@ class VideoLAEODataset_temporal(Dataset):
                 
                 # Load annotations for selected person ids
                 head_bboxes = []; gaze_pts = []; speaking_scores = []; laeo_ids = []
+
+                head_bbox_img = img_annotations['head_bboxes']
+                head_bbox_img = torch.from_numpy(head_bbox_img.values[0].astype(np.float32))
+                gaze_pt_img = img_annotations['gaze_points']
+                gaze_pt_img = torch.from_numpy(gaze_pt_img.values[0].astype(np.float32))
+
                 for pi, pid in enumerate(person_ids_ann):
                     pid_idx = np.where(pids_ann==pid)[0]
                     if len(pid_idx)==0:
@@ -319,15 +336,21 @@ class VideoLAEODataset_temporal(Dataset):
                     else:
                         if len(pid_idx)>1:
                             pid_idx = pid_idx[:1]
-                        img_ann = img_annotations.iloc[pid_idx]
-                        head_bbox = img_ann[["head_xmin", "head_ymin", "head_xmax", "head_ymax"]]
-                        head_bbox = torch.from_numpy(head_bbox.values.astype(np.float32)).squeeze() 
+                        # img_ann = img_annotations.iloc[pid_idx]
+                        # head_bbox = img_ann[["head_xmin", "head_ymin", "head_xmax", "head_ymax"]]
+                        # head_bbox = torch.from_numpy(head_bbox.values.astype(np.float32)).squeeze()
+                        head_bbox = head_bbox_img[pid_idx].squeeze()
                         head_bboxes.append(head_bbox)
-                        gaze_pt = img_ann[["gaze_x", "gaze_y"]]
-                        gaze_pt = torch.from_numpy(gaze_pt.values.astype(np.float32)).squeeze() 
+
+                        # gaze_pt = img_ann[["gaze_x", "gaze_y"]]
+                        # gaze_pt = torch.from_numpy(gaze_pt.values.astype(np.float32)).squeeze() 
+                        gaze_pt = gaze_pt_img[pid_idx].squeeze()
                         gaze_pts.append(gaze_pt)
-                        cid = img_ann['laeo_id'].values.item()
-                        laeo_ids.append(cid)
+
+                        # cid = img_ann['laeo_id'].values.item()
+                        # laeo_ids.append(cid)
+                        laeo_ids.append(-100)
+
                         if len(det_head_bboxes)>0 and pid>=0 and pid<self.pid_offset//2:
                             speaking_scores.append(speaking_det[index_spk[pid_idx]])
                         else:
@@ -429,12 +452,15 @@ class VideoLAEODataset_temporal(Dataset):
                 _, img_h, img_w = sample['image'].shape
                 sample['head_masks'] = generate_mask(head_bboxes, img_w, img_h)
 
-                # generate gaze heatmaps
-                sample["gaze_heatmaps"] = generate_gaze_heatmap(gaze_pts, sigma=self.heatmap_sigma, size=self.heatmap_size)
-
                 is_child = torch.zeros(len(heads), dtype=torch.float) - 1
                 coatt_ids = torch.zeros(len(heads), dtype=torch.long)
                 lah_ids = laeo2lah(laeo_ids)
+
+                # generate gaze heatmaps
+                sample["gaze_heatmaps"] = generate_gaze_heatmap(gaze_pts, sigma=self.heatmap_sigma, size=self.heatmap_size)
+                coatt_heatmaps, coatt_levels = generate_coatt_heatmap(sample["gaze_heatmaps"], coatt_ids, self.num_coatt, size=self.heatmap_size)
+                sample["coatt_heatmaps"] = coatt_heatmaps
+                sample["coatt_levels"] = coatt_levels
 
                 sample['lah_ids'] = lah_ids
                 sample['coatt_ids'] = coatt_ids
@@ -454,6 +480,8 @@ class VideoLAEODataset_temporal(Dataset):
                 t_sample['gaze_pts'].append(sample['gaze_pts'])
                 t_sample['gaze_vecs'].append(sample['gaze_vecs'])
                 t_sample['gaze_heatmaps'].append(sample['gaze_heatmaps'])
+                t_sample['coatt_heatmaps'].append(sample['coatt_heatmaps'])
+                t_sample['coatt_levels'].append(sample['coatt_levels'])
                 t_sample['inout'].append(sample['inout'])
                 t_sample['lah_ids'].append(sample['lah_ids'])
                 t_sample['coatt_ids'].append(sample['coatt_ids'])

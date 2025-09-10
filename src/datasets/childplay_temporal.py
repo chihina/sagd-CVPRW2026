@@ -16,7 +16,7 @@ import torchvision.transforms.functional as TF
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from torchvision.ops import box_iou
-from src.utils import square_bbox, generate_gaze_heatmap, Stage, lah2laeo, lah2coatt, get_ptcloud, CameraToEyeMatrix, generate_mask, pair, load_pkl
+from src.utils import square_bbox, generate_gaze_heatmap, Stage, lah2laeo, lah2coatt, get_ptcloud, CameraToEyeMatrix, generate_mask, pair, load_pkl, generate_coatt_heatmap
 
 from src.transforms import (
     ColorJitter,
@@ -36,6 +36,7 @@ from src.transforms import (
 class ChildPlayDataset_temporal(Dataset):
     def __init__(
         self,
+        cfg,
         root: str,
         root_depth = None,
         root_focal = None,
@@ -76,17 +77,20 @@ class ChildPlayDataset_temporal(Dataset):
         self.dim_vlm = dim_vlm
         self.return_vlm_context = False
         self.return_speaking_features = False
-        
+        self.num_coatt = cfg.data.num_coatt
+
         # load annotations
-        self.annotations, self.keys = self._load_annotations()
+        # self.annotations, self.keys = self._load_annotations()
+        # self.annotations = self._load_annotations()
+        self.annotations, self.paths = self._load_annotations()
         
          # load speaking status file
-        self.df_speaking = self.load_annotations_speaker()
-        self.df_speaking = self.df_speaking.groupby('path')
+        # self.df_speaking = self.load_annotations_speaker()
+        # self.df_speaking = self.df_speaking.groupby('path')
         
         # load speaking features
-        self.df_speaking_features = self.load_features_speaker()
-        self.df_speaking_features = self.df_speaking_features.groupby('path')
+        # self.df_speaking_features = self.load_features_speaker()
+        # self.df_speaking_features = self.df_speaking_features.groupby('path')
         
         # ======== for VLM context =========
         path_to_vlm = '/idiap/temp/pvuillecard/projects/nlp_vlm/experiments/2024-03-14/17-59-47/outputs/childplay_score_blip2_ensemble_text_prompt_swig.pkl'  # SWIG
@@ -138,76 +142,95 @@ class ChildPlayDataset_temporal(Dataset):
         
     # exclude_cls=['gaze_shift', 'inside_occluded', 'inside_uncertain', 'eyes_closed']
     def _load_annotations(self, exclude_cls=[]):
-        files = glob(os.path.join(self.root, 'annotations', self.split, '*.csv'))
-        li = []
-        for file in files:
-            df = pd.read_csv(file)
-            li.append(df)
-        annotations = pd.concat(li, axis=0, ignore_index=True)
+        # files = glob(os.path.join(self.root, 'annotations', self.split, '*.csv'))
+        # li = []
+        # for file in files:
+        #     df = pd.read_csv(file)
+        #     li.append(df)
+        # annotations = pd.concat(li, axis=0, ignore_index=True)
+
+        annotation_path = f"data/VSGaze/childplay_{self.split}.h5"
+        annotations = pd.read_hdf(annotation_path)
         
-        if len(exclude_cls) > 0:
-            cond = annotations.gaze_class.isin(exclude_cls)
-            annotations = annotations[~cond].reset_index(drop=True)
+        # if len(exclude_cls) > 0:
+            # cond = annotations.gaze_class.isin(exclude_cls)
+            # annotations = annotations[~cond].reset_index(drop=True)
         
         # Temporarily remove extra annotation for which there is no frame
-        annotations = annotations.drop(annotations[(annotations['clip'] == '4yWavYq9_Ks_405-451') & (annotations.frame == 48)].index)
+        # annotations = annotations.drop(annotations[(annotations['clip'] == '4yWavYq9_Ks_405-451') & (annotations.frame == 48)].index)
         
         # Change cases where gaze_class=='inside_visible' but gaze_x==-1 to gaze_class=='inside-uncertain'
-        incorr_indices = annotations[(annotations['gaze_class']=='inside_visible') & (annotations['gaze_x'] == -1)].index
-        annotations['gaze_class'][incorr_indices] = 'inside_uncertain'
+        # incorr_indices = annotations[(annotations['gaze_class']=='inside_visible') & (annotations['gaze_x'] == -1)].index
+        # annotations['gaze_class'][incorr_indices] = 'inside_uncertain'
         
         # Drop children or adults from the dataset
-        print('ChildPlay subset: ', self.subset)
-        if self.subset=='child':
-            annotations = annotations.drop(annotations[(annotations['is_child']==0)].index)
-        elif self.subset=='adult':
-            annotations = annotations.drop(annotations[(annotations['is_child']==1)].index)
+        # print('ChildPlay subset: ', self.subset)
+        # if self.subset=='child':
+            # annotations = annotations.drop(annotations[(annotations['is_child']==0)].index)
+        # elif self.subset=='adult':
+            # annotations = annotations.drop(annotations[(annotations['is_child']==1)].index)
         
         # re-name head bbox annotations
-        annotations = annotations.rename(columns={'bbox_x': 'head_xmin', 'bbox_y': 'head_ymin'})
-        annotations['head_xmax'] = annotations['head_xmin'] + annotations['bbox_width']
-        annotations['head_ymax'] = annotations['head_ymin'] + annotations['bbox_height']
+        # annotations = annotations.rename(columns={'bbox_x': 'head_xmin', 'bbox_y': 'head_ymin'})
+        # annotations['head_xmax'] = annotations['head_xmin'] + annotations['bbox_width']
+        # annotations['head_ymax'] = annotations['head_ymin'] + annotations['bbox_height']
         
         # merge with speaking status annotations
-        df_gt_speaking = pd.read_csv('/idiap/temp/agupta/data/child-play/childplay_speaking.csv', index_col=0)
-        annotations = annotations.merge(df_gt_speaking, on=['clip', 'frame', 'person_id'], how='left')
+        # df_gt_speaking = pd.read_csv('/idiap/temp/agupta/data/child-play/childplay_speaking.csv', index_col=0)
+        # annotations = annotations.merge(df_gt_speaking, on=['clip', 'frame', 'person_id'], how='left')
         
         # group by clip and frame
-        annotations = annotations.groupby(['clip', 'frame'])
-        keys = np.array(list(annotations.groups.keys()))
+        # annotations = annotations.groupby(['clip', 'frame'])
+        # keys = np.array(list(annotations.groups.keys()))
         
+        # if self.stride > 1:
+            # index_keep = np.arange(len(keys), step=self.stride)
+            # keys = keys[index_keep]
+        
+        annotations = annotations.groupby('path')
+        paths = list(annotations.groups.keys())
+        paths = np.array(paths)
+
         if self.stride > 1:
-            index_keep = np.arange(len(keys), step=self.stride)
-            keys = keys[index_keep]
-        
-        return annotations, keys
+            index_keep = np.arange(len(paths), step=self.stride)
+            paths = paths[index_keep]
+
+        # return annotations, keys
+        return annotations, paths
         
     def __getitem__(self, index):
-        clip, frame = self.keys[index]
-        frame = int(frame)
+        # clip, frame = self.keys[index]
+        
+        # frame = int(frame)
         # jitter frame number during training
-        if self.split=='train':
-            if self.temporal_context==0:
-                frame_shift = torch.randint(-(self.temporal_stride//2), self.temporal_stride//2, (1,)).item()
-            else:
-                frame_shift = torch.randint(-(self.temporal_context*self.temporal_stride-1), self.temporal_context*self.temporal_stride, (1,)).item()
-            frame_tmp = frame + frame_shift
-            while (clip, frame_tmp) not in self.annotations.groups.keys():
-                if self.temporal_context==0:
-                    frame_shift = torch.randint(-(self.temporal_stride//2), self.temporal_stride//2, (1,)).item()
-                else:
-                    frame_shift = torch.randint(-(self.temporal_context*self.temporal_stride-1), self.temporal_context*self.temporal_stride, (1,)).item()
-                frame_tmp = frame + frame_shift
-            frame = frame_tmp
-        img_annotations = self.annotations.get_group((clip, frame))
+        # if self.split=='train':
+        #     if self.temporal_context==0:
+        #         frame_shift = torch.randint(-(self.temporal_stride//2), self.temporal_stride//2, (1,)).item()
+        #     else:
+        #         frame_shift = torch.randint(-(self.temporal_context*self.temporal_stride-1), self.temporal_context*self.temporal_stride, (1,)).item()
+        #     frame_tmp = frame + frame_shift
+        #     while (clip, frame_tmp) not in self.annotations.groups.keys():
+        #         if self.temporal_context==0:
+        #             frame_shift = torch.randint(-(self.temporal_stride//2), self.temporal_stride//2, (1,)).item()
+        #         else:
+        #             frame_shift = torch.randint(-(self.temporal_context*self.temporal_stride-1), self.temporal_context*self.temporal_stride, (1,)).item()
+        #         frame_tmp = frame + frame_shift
+        #     frame = frame_tmp
+        
+        # img_annotations = self.annotations.get_group((clip, frame))
+
+        path = self.paths[index]
+        img_annotations = self.annotations.get_group(path)
+        frame = int(path.split('/')[-1].split('.')[0].split('_')[-1])
+        curr_frame_nb = frame
 
         # get current frame num
-        clip = img_annotations['clip'].values[0]
-        video_id, interval = clip.replace('-downsample', '').rsplit('_', 1)
-        offset = int(interval.split('-')[0])
-        curr_frame_nb = img_annotations['frame'].values[0]
-        img_name = f'{video_id}_{offset + curr_frame_nb - 1}.jpg'
-        path = os.path.join('images', clip, img_name)
+        # clip = img_annotations['clip'].values[0]
+        # video_id, interval = clip.replace('-downsample', '').rsplit('_', 1)
+        # offset = int(interval.split('-')[0])
+        # curr_frame_nb = img_annotations['frame'].values[0]
+        # img_name = f'{video_id}_{offset + curr_frame_nb - 1}.jpg'
+        # path = os.path.join('images', clip, img_name)
         
         # read current frame
         img_path = os.path.join(self.root, path)
@@ -225,22 +248,27 @@ class ChildPlayDataset_temporal(Dataset):
         frame_nbs = np.arange(curr_frame_nb-(self.temporal_stride*self.temporal_context), curr_frame_nb+(self.temporal_stride*self.temporal_context)+1, self.temporal_stride)
         
         # get annotated person ids
-        pids_ann = img_annotations['person_id'].values
-        head_bboxes = img_annotations[["head_xmin", "head_ymin", "head_xmax", "head_ymax"]]
-        head_bboxes = torch.from_numpy(head_bboxes.values.astype(np.float32))
+        # pids_ann = img_annotations['person_id'].values
+        # head_bboxes = img_annotations[["head_xmin", "head_ymin", "head_xmax", "head_ymax"]]
+        # head_bboxes = torch.from_numpy(head_bboxes.values.astype(np.float32))
+
+        head_bboxes = img_annotations['head_bboxes']
+        head_bboxes = torch.from_numpy(head_bboxes.values[0].astype(np.float32))
+        pids_ann = np.arange(len(head_bboxes))
+
         if self.split=='train':    # shuffle pids
             rand_indices = torch.randperm(head_bboxes.size(0))
             pids_ann = pids_ann[rand_indices]
         if len(pids_ann.shape)==0:
             pids_ann = np.expand_dims(pids_ann, 0)
-        
+
         # get detected person ids
         pids_det = torch.tensor([])
-        if path in self.df_speaking.groups.keys():
-            df_speaking_frame = self.df_speaking.get_group(path)
-            det_head_bboxes = np.stack([df_speaking_frame['xmin'].values*img_w, df_speaking_frame['ymin'].values*img_h, df_speaking_frame['xmax'].values*img_w, df_speaking_frame['ymax'].values*img_h], axis=1)
-            det_head_bboxes = torch.from_numpy(det_head_bboxes.astype(np.float32))
-            pids_det = df_speaking_frame['id'].values + self.pid_offset    # add offset to detected people ids
+        # if path in self.df_speaking.groups.keys():
+            # df_speaking_frame = self.df_speaking.get_group(path)
+            # det_head_bboxes = np.stack([df_speaking_frame['xmin'].values*img_w, df_speaking_frame['ymin'].values*img_h, df_speaking_frame['xmax'].values*img_w, df_speaking_frame['ymax'].values*img_h], axis=1)
+            # det_head_bboxes = torch.from_numpy(det_head_bboxes.astype(np.float32))
+            # pids_det = df_speaking_frame['id'].values + self.pid_offset    # add offset to detected people ids
         
         # keep non-overlapping detected heads
         index_spk = torch.zeros(len(pids_ann)); index_spk_keep = torch.zeros(len(pids_ann))
@@ -293,6 +321,8 @@ class ChildPlayDataset_temporal(Dataset):
                 "gaze_pts": [],
                 "gaze_vecs": [],
                 "gaze_heatmaps": [],
+                "coatt_heatmaps": [],
+                "coatt_levels": [],
                 "lah_ids": [],
                 "laeo_ids": [],
                 "coatt_ids": [],
@@ -314,7 +344,8 @@ class ChildPlayDataset_temporal(Dataset):
             t_sample['speaking_features'] = []
         for frame_nb in frame_nbs:
             # check if frame exists
-            if not (clip, frame_nb) in self.annotations.groups.keys():
+            # if not (clip, frame_nb) in self.annotations.groups.keys():
+            if not path in self.annotations.groups.keys():
                 t_sample['image'].append(torch.zeros((3, self.image_size[1], self.image_size[0]), dtype=torch.float32))
                 t_sample['heads'].append(torch.zeros((batch_num_heads+1, 3, 224, 224), dtype=torch.float32))
                 t_sample['head_centers'].append(torch.zeros((batch_num_heads+1, 2), dtype=torch.float32))
@@ -345,8 +376,8 @@ class ChildPlayDataset_temporal(Dataset):
                 # Get annotations
                 ###########################################
                 # Load image
-                img_name = f'{video_id}_{offset + frame_nb - 1}.jpg'
-                path = os.path.join('images', clip, img_name)
+                # img_name = f'{video_id}_{offset + frame_nb - 1}.jpg'
+                # path = os.path.join('images', clip, img_name)
                 img_path = os.path.join(self.root, path)
                 image = Image.open(img_path)  
                 img_w, img_h = image.size
@@ -362,19 +393,33 @@ class ChildPlayDataset_temporal(Dataset):
                     pcd = get_ptcloud(depth.squeeze(0), focal_length).permute(2,0,1)
                 
                 # Get detected head bboxes
-                if path in self.df_speaking.groups.keys():
-                    df_speaking_frame = self.df_speaking.get_group(path)
-                    det_head_bboxes = np.stack([df_speaking_frame['xmin'].values*img_w, df_speaking_frame['ymin'].values*img_h, df_speaking_frame['xmax'].values*img_w, df_speaking_frame['ymax'].values*img_h], axis=1)
-                    det_head_bboxes = torch.from_numpy(det_head_bboxes.astype(np.float32))
-                    pids_det = torch.from_numpy(df_speaking_frame['id'].values) + self.pid_offset
-                    speaking_det = torch.from_numpy(df_speaking_frame['score'].values.astype(np.float32))
-                else:
-                    det_head_bboxes = []
+                # if path in self.df_speaking.groups.keys():
+                #     df_speaking_frame = self.df_speaking.get_group(path)
+                #     det_head_bboxes = np.stack([df_speaking_frame['xmin'].values*img_w, df_speaking_frame['ymin'].values*img_h, df_speaking_frame['xmax'].values*img_w, df_speaking_frame['ymax'].values*img_h], axis=1)
+                #     det_head_bboxes = torch.from_numpy(det_head_bboxes.astype(np.float32))
+                #     pids_det = torch.from_numpy(df_speaking_frame['id'].values) + self.pid_offset
+                #     speaking_det = torch.from_numpy(df_speaking_frame['score'].values.astype(np.float32))
+                # else:
+                #     det_head_bboxes = []
+
+                det_head_bboxes = []
 
                 # Load annotations for selected person ids
-                img_annotations = self.annotations.get_group((clip, frame_nb))
-                pids_ann = img_annotations["person_id"].values 
+                # img_annotations = self.annotations.get_group((clip, frame_nb))
+                img_annotations = self.annotations.get_group(path)
+
+                # pids_ann = img_annotations["person_id"].values
+
+                head_bbox_img = img_annotations['head_bboxes']
+                head_bbox_img = torch.from_numpy(head_bbox_img.values[0].astype(np.float32))
+                gaze_pt_img = img_annotations['gaze_points']
+                gaze_pt_img = torch.from_numpy(gaze_pt_img.values[0].astype(np.float32))
+
+                pids_ann = np.arange(len(head_bboxes))
+                person_ids_ann = np.unique(pids_ann)
+
                 head_bboxes = []; gaze_pts = []; inout = []; gt_speaking = []; speaking_scores = []; is_child = []
+
                 for pi, pid in enumerate(person_ids_ann):
                     pid_idx = np.where(pids_ann==pid)[0]
                     if len(pid_idx)==0:
@@ -385,25 +430,30 @@ class ChildPlayDataset_temporal(Dataset):
                         speaking_scores.append(-1)
                         is_child.append(-1)
                     else:
-                        img_ann = img_annotations.iloc[pid_idx]
-                        head_bbox = img_ann[["head_xmin", "head_ymin", "head_xmax", "head_ymax"]]
-                        head_bbox = torch.from_numpy(head_bbox.values.astype(np.float32)).squeeze() 
+                        # img_ann = img_annotations.iloc[pid_idx]
+                        # head_bbox = img_ann[["head_xmin", "head_ymin", "head_xmax", "head_ymax"]]
+                        # head_bbox = torch.from_numpy(head_bbox.values.astype(np.float32)).squeeze() 
+                        head_bbox = head_bbox_img[pid_idx].squeeze()
                         head_bboxes.append(head_bbox)
-                        gaze_pt = img_ann[["gaze_x", "gaze_y"]]
-                        gaze_pt = torch.from_numpy(gaze_pt.values.astype(np.float32)).squeeze() 
+
+                        # gaze_pt = img_ann[["gaze_x", "gaze_y"]]
+                        # gaze_pt = torch.from_numpy(gaze_pt.values.astype(np.float32)).squeeze() 
+                        gaze_pt = gaze_pt_img[pid_idx].squeeze()
                         gaze_pts.append(gaze_pt)
-                        is_child.append(img_ann['is_child'].values[0])
+                        
+                        # is_child.append(img_ann['is_child'].values[0])
+                        is_child.append(-1)
                         io = -1
-                        if img_ann['gaze_class'].values=='inside_visible':
-                            io = 1
-                        elif img_ann['gaze_class'].values=='outside_frame':
-                            io = 0
+                        # if img_ann['gaze_class'].values=='inside_visible':
+                            # io = 1
+                        # elif img_ann['gaze_class'].values=='outside_frame':
+                            # io = 0
                         inout.append(io)
                         si = -1
-                        if img_ann['speaking_status'].values in ['speaking', 'vocalizing', 'laughing']:
-                            si = 1
-                        elif img_ann['speaking_status'].values=='not-speaking':
-                            si = 0
+                        # if img_ann['speaking_status'].values in ['speaking', 'vocalizing', 'laughing']:
+                            # si = 1
+                        # elif img_ann['speaking_status'].values=='not-speaking':
+                            # si = 0
                         gt_speaking.append(si)  
                         if len(det_head_bboxes)>0:
                             pid_idx = torch.where(pids_det==index_spk[pi])[0]
@@ -588,11 +638,14 @@ class ChildPlayDataset_temporal(Dataset):
                     sample['gaze_vecs_3d'] = gaze_vecs_3d.squeeze()
                     sample['cam2eye'] = cam2eye
 
-                # generate gaze heatmaps
-                sample["gaze_heatmaps"] = generate_gaze_heatmap(gaze_pts, sigma=self.heatmap_sigma, size=self.heatmap_size)
-
                 laeo_ids = lah2laeo(lah_ids)
                 coatt_ids = lah2coatt(lah_ids)
+
+                # generate gaze heatmaps
+                sample["gaze_heatmaps"] = generate_gaze_heatmap(gaze_pts, sigma=self.heatmap_sigma, size=self.heatmap_size)
+                coatt_heatmaps, coatt_levels = generate_coatt_heatmap(sample["gaze_heatmaps"], coatt_ids, self.num_coatt, size=self.heatmap_size)
+                sample["coatt_heatmaps"] = coatt_heatmaps
+                sample["coatt_levels"] = coatt_levels
 
                 sample['lah_ids'] = lah_ids
                 sample['laeo_ids'] = laeo_ids
@@ -614,6 +667,8 @@ class ChildPlayDataset_temporal(Dataset):
                 t_sample['gaze_pts'].append(sample['gaze_pts'])
                 t_sample['gaze_vecs'].append(sample['gaze_vecs'])
                 t_sample['gaze_heatmaps'].append(sample['gaze_heatmaps'])
+                t_sample['coatt_heatmaps'].append(sample['coatt_heatmaps'])
+                t_sample['coatt_levels'].append(sample['coatt_levels'])
                 t_sample['inout'].append(sample['inout'])
                 t_sample['lah_ids'].append(sample['lah_ids'])
                 t_sample['laeo_ids'].append(sample['laeo_ids'])
@@ -640,7 +695,8 @@ class ChildPlayDataset_temporal(Dataset):
         return t_sample
 
     def __len__(self):
-        return len(self.keys)
+        # return len(self.keys)
+        return len(self.paths)
     
 
 # ============================================================================================================ #

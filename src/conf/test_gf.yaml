@@ -14,9 +14,9 @@ experiment:
     name: MTGS-NK #rinn-hgaze-n1-multivit-gaze_vec-ep15-amp
     group: null # /!\
     task: test # combination of {train, val, test, predict} separated by '+' sign. TODO: train+predict # /!\
-    dataset: videocoatt # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
+    dataset: gazefollow # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
     path: ${hydra:runtime.cwd} # to retrieve logs and checkpoints
-    cuda: 2
+    cuda: 3
 
 # ------------------------------------------------------------------------------------------------------------------- #
 
@@ -131,13 +131,8 @@ val:
 # ------------------------------------------------------------------------------------------------------------------- #
 
 test:
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-09-09/10-11-19_COA_True_SOC_True/best.ckpt"
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-09-09/20-34-32_COA_True_SOC_True/best.ckpt"
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-09-09/20-34-32_COA_True_SOC_True/last.ckpt"
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-09-10/11-04-55_COA_True_SOC_True/best.ckpt"
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-09-10/11-04-55_COA_True_SOC_True/last.ckpt"
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-09-10/14-20-06_COA_True_SOC_False/best.ckpt"
-    checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-09-10/14-20-06_COA_True_SOC_False/last.ckpt"
+    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/gazefollow/2025-09-02/14-07-08_COA_False_SOC_False/best.ckpt"
+    checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/gazefollow/2025-09-09/14-12-44_COA_False_SOC_True/best.ckpt"
     batch_size: 1 # /!\
     device: ${train.device}
 

@@ -13,6 +13,7 @@ TERM_COLOR = "cyan"
 
 
 def init_logger(cfg):
+    experiment_name = f'{cfg.experiment.name}-{cfg.experiment.dataset}'
     if cfg.wandb.log:
         id = wandb.util.generate_id()  # type: ignore
         logger = WandbLogger(
@@ -21,7 +22,8 @@ def init_logger(cfg):
             group=cfg.experiment.group,
             log_model=False,
             id=id,
-            name=cfg.experiment.name,
+            # name=cfg.experiment.name,
+            name=experiment_name,
             save_dir="./",
             allow_val_change=True,
         )

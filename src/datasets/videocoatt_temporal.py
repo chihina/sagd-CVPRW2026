@@ -171,6 +171,7 @@ class VideoCoAttDataset_temporal(Dataset):
         head_bboxes = img_annotations['head_bboxes']
         head_bboxes = torch.from_numpy(head_bboxes.values[0].astype(np.float32))
         
+        '''
         # get detected person ids
         pids_det = torch.tensor([])
         if path in self.df_speaking.groups.keys():
@@ -203,7 +204,10 @@ class VideoCoAttDataset_temporal(Dataset):
             elif self.split=='train' and len(pids_det)>1:    # shuffle pids
                 rand_indices = torch.randperm(len(pids_det))
                 pids_det = pids_det[rand_indices]
-        
+        '''
+
+        pids_ann = np.arange(len(head_bboxes))
+
         # shuffle pids
         if self.split=='train':    
             rand_indices = torch.randperm(len(pids_ann))
@@ -212,15 +216,28 @@ class VideoCoAttDataset_temporal(Dataset):
             pids_ann = np.expand_dims(pids_ann, 0)
         
         # keep up to num_people ids
+        '''
         person_ids = np.concatenate([pids_ann, pids_det])
+        '''
+
+        person_ids = pids_ann
         num_heads = len(person_ids)
         num_keep = num_heads
+
+        '''
         if self.num_people!='all':
             batch_num_heads = self.num_people
             if num_heads>1:
                 num_keep = np.random.randint(2, min(num_heads, self.num_people)+1)
         else:
             batch_num_heads = num_heads
+        '''
+        
+        if self.num_people!='all':
+            batch_num_heads = self.num_people
+        else:
+            batch_num_heads = num_heads
+
         person_ids = person_ids[:num_keep]
         person_ids_ann = person_ids[person_ids<self.pid_offset]
         person_ids_det = person_ids[person_ids>=self.pid_offset]
@@ -289,12 +306,13 @@ class VideoCoAttDataset_temporal(Dataset):
                 pcd = torch.zeros((3, img_h, img_w), dtype=torch.float32)
                 
                 # get annotated person bboxes
-                head_bboxes = []
-                if path in self.annotations.groups.keys():
-                    img_annotations = self.annotations.get_group(path)
-                    head_bboxes = img_annotations['head_bboxes']
-                    head_bboxes = torch.from_numpy(head_bboxes.values[0].astype(np.float32))
+                # head_bboxes = []
+                # if path in self.annotations.groups.keys():
+                    # img_annotations = self.annotations.get_group(path)
+                    # head_bboxes = img_annotations['head_bboxes']
+                    # head_bboxes = torch.from_numpy(head_bboxes.values[0].astype(np.float32))
                 
+                '''
                 # Get detected head bboxes
                 if path in self.df_speaking.groups.keys():
                     df_speaking_frame = self.df_speaking.get_group(path)
@@ -322,26 +340,36 @@ class VideoCoAttDataset_temporal(Dataset):
                 else:
                     pids_ann = torch.tensor([])
                 pids_det += self.pid_offset
+                '''
                 
                 # Load annotations for selected person ids
-                head_bboxes = []; gaze_pts = []; speaking_scores = []; coatt_ids = []
+                head_bboxes = []; gaze_pts = []; speaking_scores = []
+                coatt_ids = []
 
-                # Load annotations of coatt pairs
+                # Load annotations of coatt pairs and generate coatt ids
                 coatt_pairs = img_annotations['coatt_pairs'].values[0]
                 pairs = img_annotations['pairs'].values[0]
+
+                # define the dict in which key: original person id, value: the order of the person id in this sample
+                pids_ann_ori_set = set(pairs.flatten())
+                pids_temp_to_stat_dict = {pid: pi for pi, pid in enumerate(sorted(pids_ann_ori_set))}
+
                 coatt_p_ids = {}
                 for pair_idx, coatt_pair in enumerate(coatt_pairs):
                     if coatt_pair == 1:
                         pair = pairs[pair_idx]
                         pid_1, pid_2 = map(int, pair)
-                        pid_1, pid_2 = pid_1 + self.pid_offset//2, pid_2 + self.pid_offset//2
+                        pid_1 = pids_temp_to_stat_dict[pid_1]
+                        pid_2 = pids_temp_to_stat_dict[pid_2]
+                        
                         find_coatt_id = False
                         for coatt_id, p_ids in coatt_p_ids.items():
-                            if (pid_1 in p_ids) and (pid_2 in p_ids):
-                                coatt_p_ids[coatt_id].update({pid_1, pid_2})
+                            if (pid_1 in p_ids) or (pid_2 in p_ids):
+                                coatt_p_ids[coatt_id].add(pid_1)
+                                coatt_p_ids[coatt_id].add(pid_2)
                                 find_coatt_id = True
                         if not find_coatt_id:
-                            coatt_p_ids[len(coatt_p_ids)+1] = {pid_1, pid_2}
+                            coatt_p_ids[len(coatt_p_ids)+1] = set([pid_1, pid_2])
 
                 head_bbox_img = img_annotations['head_bboxes']
                 head_bbox_img = torch.from_numpy(head_bbox_img.values[0].astype(np.float32))
@@ -359,14 +387,9 @@ class VideoCoAttDataset_temporal(Dataset):
                         if len(pid_idx)>1:
                             pid_idx = pid_idx[:1]
 
-                        # img_ann = img_annotations.iloc[pid_idx]
+                        head_box = head_bbox_img[pid_idx].squeeze()
+                        head_bboxes.append(head_box)
 
-                        # head_bbox = img_ann['head_bboxes']
-                        # head_bbox = torch.from_numpy(head_bbox.values[0].astype(np.float32)).squeeze() 
-                        head_bbox = head_bbox_img[pid_idx].squeeze()
-                        head_bboxes.append(head_bbox)
-
-                        # gaze_pt = img_ann['gaze_points']
                         gaze_pt = gaze_pt_img[pid_idx].squeeze()
                         gaze_pts.append(gaze_pt)
 
@@ -380,11 +403,17 @@ class VideoCoAttDataset_temporal(Dataset):
                         if not find_coatt_id:
                             coatt_ids.append(0)
 
+                        '''
                         if len(det_head_bboxes)>0 and pid>=0 and pid<self.pid_offset//2:
                             speaking_scores.append(speaking_det[index_spk[pid_idx]])
                         else:
                             speaking_scores.append(-1)
+                        '''
 
+                        speaking_scores.append(-1)
+
+
+                '''
                 # Process detected head bboxes
                 for pid in person_ids_det:
                     pid_idx = np.where(pids_det==pid)[0]
@@ -398,7 +427,8 @@ class VideoCoAttDataset_temporal(Dataset):
                     else:
                         speaking_scores.append(speaking_det[pid_idx])
                         head_bboxes.append(det_head_bboxes[pid_idx].squeeze())
-                
+                '''                 
+
                 # stack annotations
                 coatt_ids = torch.tensor(coatt_ids, dtype=torch.long)
                 speaking_scores = torch.tensor(speaking_scores, dtype=torch.float)
@@ -503,14 +533,14 @@ class VideoCoAttDataset_temporal(Dataset):
                 _, img_h, img_w = sample['image'].shape
                 sample['head_masks'] = generate_mask(head_bboxes, img_w, img_h)
 
+                is_child = torch.zeros(len(heads), dtype=torch.float) - 1
+                laeo_ids = torch.zeros(len(heads), dtype=torch.long)   # laeo cannot be inferred from coatt annotations
+
                 # generate gaze heatmaps
                 sample["gaze_heatmaps"] = generate_gaze_heatmap(gaze_pts, sigma=self.heatmap_sigma, size=self.heatmap_size)
                 coatt_heatmaps, coatt_levels = generate_coatt_heatmap(sample["gaze_heatmaps"], coatt_ids, self.num_coatt, size=self.heatmap_size)
                 sample["coatt_heatmaps"] = coatt_heatmaps
                 sample["coatt_levels"] = coatt_levels
-
-                is_child = torch.zeros(len(heads), dtype=torch.float) - 1
-                laeo_ids = torch.zeros(len(heads), dtype=torch.long)   # laeo cannot be inferred from coatt annotations
 
                 sample['lah_ids'] = lah_ids
                 sample['laeo_ids'] = laeo_ids
@@ -551,8 +581,11 @@ class VideoCoAttDataset_temporal(Dataset):
 
     def __len__(self):
         # return len(self.paths)
-        # return int(len(self.paths) * 0.2)
-        return 300
+
+        # self.use_ratio = 0.1
+        # self.use_ratio = 0.5
+        self.use_ratio = 1.0
+        return int(len(self.paths) * self.use_ratio)
 
 # ============================================================================================================ #
 #                                              VIDEOCOATT DATA MODULE                                          #

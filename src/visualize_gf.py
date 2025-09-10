@@ -57,10 +57,6 @@ def visualize_gaze(batch, social_preds):
     num_people = len(batch['head_bboxes'][0])
     for i in range(1, num_people):
 
-        # because of no initial padding
-        if batch['dataset'][0]=='gazefollow':
-            i -= 1
-
         # check if head bbox is valid
         head_bbox = batch['head_bboxes'][0][i].clone()
         if torch.sum(head_bbox) == 0:
@@ -69,8 +65,8 @@ def visualize_gaze(batch, social_preds):
         # draw head bbox
         head_bbox = perc_to_pixel(head_bbox, frame_height, frame_width).int().cpu().numpy()
         color = colors[i]
-        thickness = 1
-        # frame = cv2.rectangle(frame, head_bbox[:2], head_bbox[2:], color, thickness)
+        thickness = 3
+        frame = cv2.rectangle(frame, head_bbox[:2], head_bbox[2:], color, thickness)
 
         # write pid
         org = (head_bbox[0], head_bbox[1] + 30)
@@ -80,14 +76,17 @@ def visualize_gaze(batch, social_preds):
         frame = cv2.putText(frame, str(i), org, font, fontScale, color_text, thickness, cv2.LINE_AA)
 
         # check if head inout prediction is over threshold
-        head_inout_pred = batch['inout_pred'][0][i]
-        head_inout_gt = batch['inout_gt'][0][i]
+        # head_inout_pred = batch['inout_pred'][0][i]
+        head_inout_pred = batch['inout_pred'][i-1]
+        # head_inout_gt = batch['inout_gt'][0][i]
+        head_inout_gt = batch['inout_gt'][i-1]
         head_inout_thresh = 0.2
         if head_inout_pred < head_inout_thresh:
             continue
 
         # draw gaze vector
-        gaze_vec_pred = batch['gv_pred'][0][i]
+        # gaze_vec_pred = batch['gv_pred'][0][i]
+        gaze_vec_pred = batch['gv_pred'][i-1]
         start = (head_bbox[:2] + head_bbox[2:])/2
         # gv_pred = gaze_vec_pred[0][i].clone().cpu().numpy()
         gv_pred = gaze_vec_pred.clone().cpu().numpy()
@@ -95,22 +94,24 @@ def visualize_gaze(batch, social_preds):
         # frame = cv2.line(frame, start.astype(np.int16), end.astype(np.int16), color_text, thickness)
 
         # draw gaze point
-        gaze_pt_pred = batch['gp_pred'][0][i]
+        # gaze_pt_pred = batch['gp_pred'][0][i]
+        gaze_pt_pred = batch['gp_pred'][i-1]
         start = (head_bbox[:2] + head_bbox[2:])/2
         # gp_pred = gaze_pt_pred[0][i].clone().cpu().numpy()
         gp_pred = gaze_pt_pred.clone().cpu().numpy()
         gp_pred *= [frame_width, frame_height]
         frame = cv2.line(frame, start.astype(np.int16), gp_pred.astype(np.int16), color, thickness)
         radius = 10
-        # frame = cv2.circle(frame, gp_pred.astype(np.int16), radius, color, thickness=-1)
+        frame = cv2.circle(frame, gp_pred.astype(np.int16), radius, color, thickness=-1)
 
         # drwa gaze point (GT)
         gaze_pt_gt = batch['gp_gt'][0][i]
+        # gaze_pt_gt = batch['gp_gt'][i]
         gp_gt = gaze_pt_gt.clone().cpu().numpy()
         gp_gt *= [frame_width, frame_height]
-        # frame = cv2.line(frame, start.astype(np.int16), gp_gt.astype(np.int16), (0, 0, 0), thickness)
+        frame = cv2.line(frame, start.astype(np.int16), gp_gt.astype(np.int16), (0, 0, 0), thickness)
         radius = 10
-        # frame = cv2.circle(frame, gp_gt.astype(np.int16), radius, (0, 0, 0), thickness=-1)
+        frame = cv2.circle(frame, gp_gt.astype(np.int16), radius, (0, 0, 0), thickness=-1)
 
     # iterate over tasks
     indices = torch.tensor(list(itertools.permutations(torch.arange(num_people), 2)))
@@ -165,53 +166,23 @@ def visualize_gaze(batch, social_preds):
     
     return frame
 
+
 def visualize_coatt(frame, batch):
     h, w = frame.shape[:2]
-    coatt_hm = batch['coatt_hm_pred'][0]
-    coatt_level = torch.sigmoid(batch['coatt_level_pred'][0])
-    coatt_level_gt = batch['coatt_level_gt'][0]
-    hm_pred = batch['hm_pred'][0, :, :, :]
-
-    print('>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>')
-    coatt_level_thresh = 0.7
-    for token_idx in range(coatt_level.shape[0]):
-        coatt_level_pred = coatt_level[token_idx, :]
-        coatt_hm_pred = coatt_hm[token_idx, :, :]
-
-        if torch.max(coatt_level_pred) > coatt_level_thresh:
-            for person_idx in range(coatt_level_pred.shape[0]):
-                coatt_level_pred_person = coatt_level_pred[person_idx]
-                head_bbox = batch['head_bboxes'][0][person_idx].clone()
-                if torch.sum(head_bbox) == 0:
-                    continue
-                head_bbox = perc_to_pixel(head_bbox, h, w).int().cpu().numpy()
-                color = colors[person_idx]
-                thickness = 5
-                frame = cv2.rectangle(frame, head_bbox[:2], head_bbox[2:], color, thickness)
-
-                # plot the coatt level prediction per person
-                org = (head_bbox[0], head_bbox[1] - 10)
-                font = cv2.FONT_HERSHEY_SIMPLEX
-                fontScale = 0.5
-                thickness = 1
-                color_text = (255, 255, 255)
-                frame = cv2.putText(frame, f'{coatt_level_pred_person:.2f}', org, font, fontScale, color_text, thickness, cv2.LINE_AA)
-
-            # generate co-attention heatmap
-            coatt_mask = coatt_level_pred > coatt_level_thresh
-            coatt_hm_pred = coatt_hm_pred * coatt_mask[:, None, None]
-            coatt_hm_pred = torch.mean(coatt_hm_pred, 0)
-
-            coatt_hm_pred = (coatt_hm_pred - torch.min(coatt_hm_pred.view(-1))) / (torch.max(coatt_hm_pred.view(-1)) - torch.min(coatt_hm_pred.view(-1)))
-            coatt_hm_pred = cv2.resize(coatt_hm_pred.cpu().numpy(), (w, h), interpolation=cv2.INTER_LINEAR)
-            coatt_hm_pred = (coatt_hm_pred * 255).astype(np.uint8)
-            coatt_hm_pred = cv2.applyColorMap(coatt_hm_pred, cv2.COLORMAP_JET)
-            frame = cv2.addWeighted(frame, 0.7, coatt_hm_pred, 0.3, 0)
+    # coatt_level_pred = batch['coatt_level_pred'][0]
+    # print('coatt_level_pred shape:', coatt_level_pred.shape)
+    # print('coatt_level_pred shape:', coatt_level_pred[:, :])
+    coatt_hm_pred = batch['coatt_hm_pred'][0, 0, :, :]
+    coatt_hm_pred = (coatt_hm_pred - torch.min(coatt_hm_pred.view(-1))) / (torch.max(coatt_hm_pred.view(-1)) - torch.min(coatt_hm_pred.view(-1)))
+    coatt_hm_pred = cv2.resize(coatt_hm_pred.cpu().numpy(), (w, h), interpolation=cv2.INTER_LINEAR)
+    coatt_hm_pred = (coatt_hm_pred * 255).astype(np.uint8)
+    coatt_hm_pred = cv2.applyColorMap(coatt_hm_pred, cv2.COLORMAP_JET)
+    frame = cv2.addWeighted(frame, 0.7, coatt_hm_pred, 0.3, 0)
 
     return frame
     
 # main function
-def compute(results, clip_name):
+def compute(results, clip_name_list):
         
     print('Getting frames...')
     rel_batches = []; rel_paths = []
@@ -223,30 +194,33 @@ def compute(results, clip_name):
         t = len(batch['path'][0])
         middle_frame_idx = int(t/2)
         path = batch['path'][0][middle_frame_idx]
-        cname = '/'.join(path.split('/')[:-1])
-        if cname!=clip_name:
+
+        # if path!=clip_name:
+            # continue
+
+        if not path in clip_name_list:
             continue
-            
+
         rel_batches.append(batch)
         rel_paths.append(path)
     
     # read one frame
-    root = get_root(batch)
-    frame_tmp = cv2.imread(os.path.join(root, path))
-    h, w = frame_tmp.shape[:2]
+    # root = get_root(batch)
+    # frame_tmp = cv2.imread(os.path.join(root, path))
+    # h, w = frame_tmp.shape[:2]
     
     # iterate over sorted frames
     print('Getting results...')
     sorted_indices = np.argsort(rel_paths)
-    fourcc = cv2.VideoWriter_fourcc(*'MP4V')
+    # fourcc = cv2.VideoWriter_fourcc(*'MP4V')
     # out = cv2.VideoWriter('demo/'+clip_name+'.mp4', fourcc, 10.0, (w,h))
     # save_path = 'demo/'+clip_name+'.mp4'
-    save_path = os.path.join('demo', batch['dataset'][0], f'{clip_name}.mp4')
-    save_dir = os.path.dirname(save_path)
+    # save_dir = os.path.dirname(save_path)
+    save_dir = os.path.join('demo', 'gazefollow')
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
-    print('Saving to:', save_path)
-    out = cv2.VideoWriter(save_path, fourcc, 10.0, (w, h))
+    print('Saving to:', save_dir)
+    # out = cv2.VideoWriter(save_path, fourcc, 10.0, (w, h))
     for idx in tqdm(sorted_indices):
         batch = rel_batches[idx]
 
@@ -285,18 +259,7 @@ def compute(results, clip_name):
         frame = visualize_gaze(batch, social_preds)
 
         # get frame with coatt visualizations
-        frame = visualize_coatt(frame, batch)
-
-        coatt_level_pred = batch['coatt_level_pred'][0]
-        # print('coatt_level_pred shape:', coatt_level_pred.shape)
-        # print('coatt_level_pred shape:', coatt_level_pred)
-        coatt_hm_pred = batch['coatt_hm_pred'][0, :, :, :]
-
-        for token_idx in range(coatt_level_pred.shape[0]):
-            coatt_level_pred_token = coatt_level_pred[token_idx, :]
-            # print(f'Token {token_idx}:', coatt_level_pred_token)
-            coatt_hm_pred_token = coatt_hm_pred[token_idx, :, :]
-            # print(f'CoAtt HM Token {token_idx} sum:', torch.sum(coatt_hm_pred_token))
+        # frame = visualize_coatt(frame, batch)
         
         # gaze_hm_pred = batch['hm_pred'][0, :, :, :]
         # for head_idx in range(len(gaze_hm_pred)):
@@ -313,7 +276,17 @@ def compute(results, clip_name):
         #     frame = cv2.addWeighted(frame, 0.7, gaze_hm_pred_head, 0.3, 0)
         
         # write frame to output video
-        out.write(frame)
+        # out.write(frame)
+
+        # save frame
+
+        data_id = batch['path'][0][0]
+        frame_save_path = os.path.join(save_dir, data_id)
+        frame_save_dir = os.path.dirname(frame_save_path)
+        if not os.path.exists(frame_save_dir):
+            os.makedirs(frame_save_dir)
+        cv2.imwrite(frame_save_path, frame)
+
     print('DONE!')
         
 if __name__=='__main__':
@@ -331,14 +304,17 @@ if __name__=='__main__':
         # coatt_hm_pred = result['coatt_hm_pred']
         # coatt_hm_pred = coatt_hm_pred.view(-1)
 
-    clip_name_list = []
-
     # videocoatt
-    clip_name_list.append('test/10')
-    clip_name_list.append('test/15')
-    clip_name_list.append('test/20')
-    clip_name_list.append('test/100')
+    # clip_name = 'test/10'
+    # clip_name = 'test/100'
 
-    # iterate each video
-    for clip_name in clip_name_list:
-        compute(results, clip_name)
+    # gazefollow
+    clip_name_list = []
+    clip_name_list.append('test2/00000000/00000001.jpg')
+    clip_name_list.append('test2/00000000/00000010.jpg')
+    clip_name_list.append('test2/00000000/00000020.jpg')
+    clip_name_list.append('test2/00000000/00000030.jpg')
+    clip_name_list.append('test2/00000000/00000040.jpg')
+    clip_name_list.append('test2/00000000/00000050.jpg')
+
+    compute(results, clip_name_list)

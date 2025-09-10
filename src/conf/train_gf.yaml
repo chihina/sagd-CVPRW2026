@@ -14,28 +14,29 @@ experiment:
     name: MTGS-NK #rinn-hgaze-n1-multivit-gaze_vec-ep15-amp
     group: null # /!\
     task: train # combination of {train, val, test, predict} separated by '+' sign. TODO: train+predict # /!\
-    dataset: videocoatt # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
+    dataset: gazefollow # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
     path: ${hydra:runtime.cwd} # to retrieve logs and checkpoints
-    cuda: 6
+    cuda: 0
 
 # ------------------------------------------------------------------------------------------------------------------- #
 
 data:
     num_samples: 36000    # GazeFollow: 108955, VAT: 9000, childplay: 15000, combined_social: 36000, laeo: 2900
-    num_people: 10 # /!\ int or -1 for all
+    num_people: 30 # /!\ int or -1 for all
     num_coatt: 30
     return_depth: False # /!\
     return_head_mask: False # /!\
     image_size: 224 # /!\ used only for scene tokenizer
     heatmap_size: 64
     heatmap_sigma: 3
-    temporal_context: 2    # 2; temporal context window # frames
+    # temporal_context: 2    # 2; temporal context window # frames
+    temporal_context: 0    # 2; temporal context window # frames
     temporal_stride: 3    # 3; temporal stride for model input
     vlm_dim: 24    # ava: 24, swig:406, hico:117 dimension of VLM context vector
-    # gf:
-        # root: /idiap/resource/database/gazefollow_extended
-        # root_depth: /idiap/temp/stafasca/data/GazeFollow-depth
-        # root_focal: None
+    gf:
+        root: /home-local/nakatani/dataset/gazefollow_extended
+        root_depth: None
+        root_focal: None
     coatt:
         # root: /idiap/resource/database/VideoCoAtt_Dataset
         root: data/VideoCoAtt_Dataset
@@ -73,16 +74,16 @@ model:
         decoder_hidden_dims: [96, 192, 384, 768]
         decoder_use_bn: True
         gaze_weights: /home/nakatani/joint_attention_project/mtgs/src/weights/gaze360_resnet18.pt
-        # multivit_weights: /home/nakatani/joint_attention_project/mtgs/src/weights/multimae-b_98_rgb+-depth-semseg_1600e_multivit-afff3f8c.pth
+        multivit_weights: /home/nakatani/joint_attention_project/mtgs/src/weights/multimae-b_98_rgb+-depth-semseg_1600e_multivit-afff3f8c.pth
         # multivit_weights: /home/nakatani/joint_attention_project/mtgs/src/weights/multimae-b_98_rgb+-depth-semseg_1600e_timm-bafa5499.pth
-        multivit_weights: False
+        # multivit_weights: False
     weights: False # {False, path to weights}
 
 # ------------------------------------------------------------------------------------------------------------------- #
 
 optimizer:
     type: AdamW # not used
-    lr: 1e-6 # /!\ 3e-6 (default)
+    lr: 1e-4 # /!\ 3e-6 (default)
     weight_decay: 1e-3 # /!\
 
 # ------------------------------------------------------------------------------------------------------------------- #
@@ -100,17 +101,20 @@ train:
     matmul_precision: medium # /!\ highest (default), high, medium
     precision: bf16-mixed # /!\ 64 (double), 32 (full), 16 (16bit mixed), bf16-mixed (bfloat16 mixed). Defaults to 32.
     epochs: 20 # /!\
-    batch_size: 8 # /!\
+    batch_size: 16 # /!\
     accumulate_grad_batches: 1 # /!\
     device: cuda
     resume: False
-    resume_from: /idiap/temp/agupta/src/gaze_interact/checkpoints/last.ckpt
+    # resume: True
+    # resume_from: /idiap/temp/agupta/src/gaze_interact/checkpoints/last.ckpt
+    resume_from: "/home/nakatani/joint_attention_project/mtgs/checkpoints/gazefollow/2025-08-28/12-38-21_COA_False_SOC_True/best.ckpt"
+
     freeze:
         gaze_encoder: False  # /!\
         gaze_encoder_backbone: False # /!\
-        image_tokenizer: True  # /!\
+        image_tokenizer: False  # /!\
         depth_tokenizer: False  # /!\
-        vit_encoder: True  # /!\
+        vit_encoder: False  # /!\
         vit_adaptor: False  # /!\
         gaze_decoder: False  # /!\
         inout_decoder: False  # /!\
@@ -119,6 +123,8 @@ train:
         lr: [1e-6, 1e-6, 1e-6, 1e-6, 3e-7] # /!\ {1e-6, [3e-6, 3e-6, 1e-6]} float, or list of floats for each param group in optimizer
         epoch_start: 12 # /!\
         annealing_epochs: 6 # /!\
+    coatt_loss: False # /!\ True, False
+    social_loss: True # /!\ True, False
 
 # ------------------------------------------------------------------------------------------------------------------- #
 

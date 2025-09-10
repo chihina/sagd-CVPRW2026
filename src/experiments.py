@@ -174,6 +174,7 @@ class Experiment(BaseExperiment):
             )
         elif self.cfg.experiment.dataset == "combined_social":
             data = CombinedSocialDataModule(
+                cfg = self.cfg,
                 root_gf = self.cfg.data.gf.root,
                 root_coatt = self.cfg.data.coatt.root,
                 root_laeo = self.cfg.data.laeo.root,
@@ -221,8 +222,10 @@ class Experiment(BaseExperiment):
         callbacks = []
         
         # Model Checkpoint
+        date_time = dt.datetime.now().strftime("%Y-%m-%d/%H-%M-%S")
+        model_prefix = f"COA_{self.cfg.train.coatt_loss}_SOC_{self.cfg.train.social_loss}"
         checkpoint_cb = ModelCheckpoint(
-            dirpath="./checkpoints",
+            dirpath=f"./checkpoints/{self.cfg.experiment.dataset}/{date_time}_{model_prefix}",
             filename="best",  # custom: "{epoch:02d}-{step:02d}-{val_acc:.3f}",
             monitor="metric/val/dist",  # "metric/val/ap", "metric/val/acc", "loss/val"
             mode="min",  # "min", "max"
@@ -323,7 +326,55 @@ class Experiment(BaseExperiment):
 
         ckpt_path = self.cfg.train.resume_from if self.cfg.train.resume else None
         print(colored(f"Resuming model training from: `{ckpt_path}`.", TERM_COLOR))
-        self.trainer.fit(self.model, self.data, ckpt_path=ckpt_path)
+        # self.trainer.fit(self.model, self.data, ckpt_path=ckpt_path)
+
+        # if ckpt_path:
+        #     # Load the entire checkpoint file into memory
+        #     checkpoint = torch.load(ckpt_path, map_location="cpu")
+            
+        #     # 2. Load ONLY the model weights using strict=False
+        #     # This will load all matching layers and ignore the missing ones.
+        #     self.model.load_state_dict(checkpoint['state_dict'], strict=False)
+
+        #     # if some parameteres are not found in the checkpoint, print them
+        #     model_keys = set(self.model.state_dict().keys())
+        #     checkpoint_keys = set(checkpoint['state_dict'].keys())
+        #     missing_keys = model_keys - checkpoint_keys
+        #     if len(missing_keys) > 0:
+        #         print(colored(f"The following model parameters were not found in the checkpoint and were initialized randomly:", "yellow"))
+        #         for key in missing_keys:
+        #             print(colored(f"  - {key}", "yellow"))
+
+        if ckpt_path:
+            print(f"Loading checkpoint: {ckpt_path}")
+            # Load the entire checkpoint file into memory
+            checkpoint = torch.load(ckpt_path, map_location="cpu")
+            checkpoint_state_dict = checkpoint['state_dict']
+
+            # Get the state dict of your current model
+            model_state_dict = self.model.state_dict()
+            
+            # Create a new state dict for weights that are compatible
+            filtered_state_dict = {}
+            
+            print("Filtering checkpoint for compatible layers...")
+            for name, param in checkpoint_state_dict.items():
+                # Check if the layer exists in the current model AND has the same shape
+                if name in model_state_dict and param.shape == model_state_dict[name].shape:
+                    filtered_state_dict[name] = param
+                else:
+                    # You can add a print statement here to see which layers were skipped
+                    if name in model_state_dict:
+                         print(colored(f"  - Skipping {name} due to shape mismatch.", "red"))
+                    else:
+                         print(colored(f"  - Skipping {name} as it's not in the current model.", "yellow"))
+
+            # Load the filtered state dict
+            # Using strict=False is still good practice here
+            self.model.load_state_dict(filtered_state_dict, strict=False)
+            print(colored("Model weights loaded successfully from filtered checkpoint.", "green"))
+
+        self.trainer.fit(self.model, self.data)
 
     def validate(self):
         ckpt_path = self.cfg.val.checkpoint

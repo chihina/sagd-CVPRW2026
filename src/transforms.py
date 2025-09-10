@@ -108,7 +108,7 @@ class Resize(object):
         
         if isinstance(self.img_size, (tuple,list)):
             t_image = TF.resize(sample["image"], (self.img_size[1], self.img_size[0]), antialias=True)  # type: ignore
-            t_pcd = TF.resize(sample["pcd"], (self.img_size[1], self.img_size[0]), antialias=True)  # type: ignore
+            # t_pcd = TF.resize(sample["pcd"], (self.img_size[1], self.img_size[0]), antialias=True)  # type: ignore
         else: # if a single number, resize smallest edge to size, ensure larger edge is multiple of 32
             
             if img_w < img_h:
@@ -123,7 +123,7 @@ class Resize(object):
                 new_w = new_w if q == 0 else 32 * (q + 1)
                 
             t_image = TF.resize(sample["image"], (new_h, new_w), antialias=True)
-            t_pcd = TF.resize(sample["pcd"], (new_h, new_w), antialias=True)
+            # t_pcd = TF.resize(sample["pcd"], (new_h, new_w), antialias=True)
         
         t_heads = []
         for head in sample["heads"]:
@@ -131,7 +131,7 @@ class Resize(object):
             t_heads.append(t_head)
         
         sample["image"] = t_image
-        sample["pcd"] = t_pcd
+        # sample["pcd"] = t_pcd
         sample["heads"] = t_heads
 
         return sample

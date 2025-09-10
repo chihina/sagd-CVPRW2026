@@ -6,7 +6,7 @@ from src.config import MyConfig
 cs = ConfigStore.instance()
 cs.store(name="my_config", node=MyConfig)
 
-@hydra.main(config_path="src/conf", config_name="test", version_base="1.1")
+@hydra.main(config_path="src/conf", config_name="test_gf", version_base="1.1")
 def main(cfg: MyConfig) -> None:
     os.environ['CUDA_VISIBLE_DEVICES'] = str(cfg.experiment.cuda)
 

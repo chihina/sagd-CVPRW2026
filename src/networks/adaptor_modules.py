@@ -13,6 +13,35 @@ import torch_geometric.nn as geom_nn
 
 _logger = logging.getLogger(__name__)
 
+class CoAttCrossAttention(nn.Module):
+    def __init__(self, dim, num_heads=8, use_kv_bias=False, use_q_bias=False):
+        super().__init__()
+        
+        self.num_heads = num_heads
+        head_dim = dim // num_heads
+        self.scale = head_dim ** -0.5
+
+        self.kv = nn.Linear(dim, dim * 2, bias=use_kv_bias)
+        self.q = nn.Linear(dim, dim, bias=use_q_bias)
+        self.proj = nn.Linear(dim, dim)
+        
+    def forward(self, coatt_tokens, gaze_token):
+        B, NP, C = coatt_tokens.shape
+        B, N, C = gaze_token.shape
+        
+        kv = self.kv(gaze_token).reshape(B, N, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        k, v = kv.unbind(0) # (b, nh, n, dh)
+        
+        # (b, np, d) >> (b, nh, np, dh) where np=num of people
+        q = self.q(coatt_tokens).reshape(B, NP, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3) 
+
+        attn = (q @ k.transpose(-2, -1)) * self.scale # (b, nh, np, n)
+        attn = attn.softmax(dim=-1)
+
+        o = (attn @ v).transpose(1, 2).reshape(B, NP, C) # (b, np, d)
+        o = self.proj(o)
+        return o
+
 
 class CrossAttention(nn.Module):
     def __init__(self, dim, num_heads=8, use_kv_bias=False, use_q_bias=False):

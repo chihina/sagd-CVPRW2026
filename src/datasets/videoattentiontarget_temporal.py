@@ -20,7 +20,7 @@ import torchvision.transforms.functional as TF
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from torchvision.ops import box_iou
-from src.utils import square_bbox, Stage, generate_gaze_heatmap, lah2laeo, lah2coatt, generate_mask, pair
+from src.utils import square_bbox, Stage, generate_gaze_heatmap, lah2laeo, lah2coatt, generate_mask, pair, generate_coatt_heatmap
 
 from src.transforms import (
     ColorJitter,
@@ -90,6 +90,7 @@ TEST_SHOWS = [
 class VideoAttentionTargetDataset_temporal(Dataset):
     def __init__(
         self,
+        cfg,
         root: str,
         split: str = "train",
         stride: int = 3,
@@ -117,14 +118,14 @@ class VideoAttentionTargetDataset_temporal(Dataset):
         self.temporal_context = temporal_context
         self.pid_offset = 1000
         self.aspect = aspect
-               
+        self.num_coatt = cfg.data.num_coatt
+
         # load annotations
         self.annotations, self.paths = self.load_annotations()
             
         # load speaking status file
-        self.df_speaking = self.load_annotations_speaker()
-        self.df_speaking = self.df_speaking.groupby('path')
-        
+        # self.df_speaking = self.load_annotations_speaker()
+        # self.df_speaking = self.df_speaking.groupby('path')
     
     def load_annotations_speaker(self):
         annotation_files = glob(os.path.join('/idiap/temp/agupta/data/attention/videoatttarget/speaker/', f"*/*.csv"))
@@ -159,40 +160,43 @@ class VideoAttentionTargetDataset_temporal(Dataset):
     
 
     def load_annotations(self):
-        annotation_files = glob(os.path.join(self.root, f"annotations/*/*/*/*.txt"))
+        # annotation_files = glob(os.path.join(self.root, f"annotations/*/*/*/*.txt"))
 
-        column_names = [
-            "path",
-            "head_xmin",
-            "head_ymin",
-            "head_xmax",
-            "head_ymax",
-            "gaze_x",
-            "gaze_y",
-        ]
-        li = []
-        for file in annotation_files:
-            show, clip, fname = file.split("/")[-3:]
-            df = pd.read_csv(file, names=column_names, sep=",")
+        annotation_path = f"data/VSGaze/vat_{self.split}.h5"
+        annotations = pd.read_hdf(annotation_path)
 
-            df["path"] = df["path"].apply(
-                lambda img_name: os.path.join(show, clip, img_name)
-            )
-            df["person_id"] = int(os.path.splitext(fname)[0][1:])  # "s02.txt" >> 2
-            df["inout"] = (df["gaze_x"] != -1).astype(int)
+        # column_names = [
+        #     "path",
+        #     "head_xmin",
+        #     "head_ymin",
+        #     "head_xmax",
+        #     "head_ymax",
+        #     "gaze_x",
+        #     "gaze_y",
+        # ]
+        # li = []
+        # for file in annotation_files:
+        #     show, clip, fname = file.split("/")[-3:]
+        #     df = pd.read_csv(file, names=column_names, sep=",")
 
-            df["split"] = "train"
-            if show in VAL_SHOWS:
-                df["split"] = "val"
-            elif show in TEST_SHOWS:
-                df["split"] = "test"
+        #     df["path"] = df["path"].apply(
+        #         lambda img_name: os.path.join(show, clip, img_name)
+        #     )
+        #     df["person_id"] = int(os.path.splitext(fname)[0][1:])  # "s02.txt" >> 2
+        #     df["inout"] = (df["gaze_x"] != -1).astype(int)
 
-            li.append(df)
-        annotations = pd.concat(li, axis=0, ignore_index=True)
-        # Filter Annotations based on Split
-        annotations = annotations[annotations["split"] == self.split].reset_index(
-            drop=True
-        )
+        #     df["split"] = "train"
+        #     if show in VAL_SHOWS:
+        #         df["split"] = "val"
+        #     elif show in TEST_SHOWS:
+        #         df["split"] = "test"
+
+        #     li.append(df)
+        # annotations = pd.concat(li, axis=0, ignore_index=True)
+        # # Filter Annotations based on Split
+        # annotations = annotations[annotations["split"] == self.split].reset_index(
+        #     drop=True
+        # )
                 
         # group by path
         annotations = annotations.groupby('path')
@@ -232,7 +236,11 @@ class VideoAttentionTargetDataset_temporal(Dataset):
         curr_frame_nb = frame
 
         # read current frame
-        img_path = os.path.join(self.root, 'images', path)
+        # img_path = os.path.join(self.root, 'images', path)
+        data_name = path.split('/')[-3].replace('_', ' ')
+        path_mod = os.path.join(data_name, path.split('/')[-2], path.split('/')[-1])
+        img_path = os.path.join(self.root, 'images', path_mod)
+
         image = Image.open(img_path)  
         img_w, img_h = image.size
         if self.split=='test' and self.aspect:    # maintain aspect ratio
@@ -247,9 +255,14 @@ class VideoAttentionTargetDataset_temporal(Dataset):
         frame_nbs = np.arange(curr_frame_nb-(self.temporal_stride*self.temporal_context), curr_frame_nb+(self.temporal_stride*self.temporal_context)+1, self.temporal_stride)
         
         # get annotated person ids
-        pids_ann = img_annotations['person_id'].values
-        head_bboxes = img_annotations[["head_xmin", "head_ymin", "head_xmax", "head_ymax"]]
-        head_bboxes = torch.from_numpy(head_bboxes.values.astype(np.float32))
+        # pids_ann = img_annotations['person_id'].values
+        # head_bboxes = img_annotations[["head_xmin", "head_ymin", "head_xmax", "head_ymax"]]
+        # head_bboxes = torch.from_numpy(head_bboxes.values.astype(np.float32))
+
+        head_bboxes = img_annotations['head_bboxes']
+        head_bboxes = torch.from_numpy(head_bboxes.values[0].astype(np.float32))
+        pids_ann = np.arange(len(head_bboxes))
+
         if self.split=='train':    # shuffle pids
             rand_indices = torch.randperm(head_bboxes.size(0))
             pids_ann = pids_ann[rand_indices]
@@ -258,11 +271,11 @@ class VideoAttentionTargetDataset_temporal(Dataset):
         
         # get detected person ids
         pids_det = torch.tensor([])
-        if path in self.df_speaking.groups.keys():
-            df_speaking_frame = self.df_speaking.get_group(path)
-            det_head_bboxes = np.stack([df_speaking_frame['xmin'].values*img_w, df_speaking_frame['ymin'].values*img_h, df_speaking_frame['xmax'].values*img_w, df_speaking_frame['ymax'].values*img_h], axis=1)
-            det_head_bboxes = torch.from_numpy(det_head_bboxes.astype(np.float32))
-            pids_det = df_speaking_frame['id'].values + self.pid_offset    # add offset to detected people ids
+        # if path in self.df_speaking.groups.keys():
+        #     df_speaking_frame = self.df_speaking.get_group(path)
+        #     det_head_bboxes = np.stack([df_speaking_frame['xmin'].values*img_w, df_speaking_frame['ymin'].values*img_h, df_speaking_frame['xmax'].values*img_w, df_speaking_frame['ymax'].values*img_h], axis=1)
+        #     det_head_bboxes = torch.from_numpy(det_head_bboxes.astype(np.float32))
+        #     pids_det = df_speaking_frame['id'].values + self.pid_offset    # add offset to detected people ids
         
         # keep non-overlapping detected heads
         index_spk = torch.zeros(len(pids_ann)); index_spk_keep = torch.zeros(len(pids_ann))
@@ -315,6 +328,8 @@ class VideoAttentionTargetDataset_temporal(Dataset):
                 "gaze_pts": [],
                 "gaze_vecs": [],
                 "gaze_heatmaps": [],
+                "coatt_heatmaps": [],
+                "coatt_levels": [],
                 "lah_ids": [],
                 "laeo_ids": [],
                 "coatt_ids": [],
@@ -353,14 +368,20 @@ class VideoAttentionTargetDataset_temporal(Dataset):
                 ###########################################
                 # Load image
                 path = os.path.join(clip,  str(frame_nb).zfill(8)+'.jpg')
-                img_path = os.path.join(self.root, 'images', path)
+                # img_path = os.path.join(self.root, 'images', path)
+
+                data_name = path.split('/')[-3].replace('_', ' ')
+                path_mod = os.path.join(data_name, path.split('/')[-2], path.split('/')[-1])
+                img_path = os.path.join(self.root, 'images', path_mod)
+
                 image = Image.open(img_path)  
                 img_w, img_h = image.size
                 
                 pcd = torch.zeros((3, img_h, img_w), dtype=torch.float32)
                 
                 # Get detected head bboxes
-                if path in self.df_speaking.groups.keys():
+                # if path in self.df_speaking.groups.keys():
+                if False:
                     df_speaking_frame = self.df_speaking.get_group(path)
                     det_head_bboxes = np.stack([df_speaking_frame['xmin'].values*img_w, df_speaking_frame['ymin'].values*img_h, df_speaking_frame['xmax'].values*img_w, df_speaking_frame['ymax'].values*img_h], axis=1)
                     det_head_bboxes = torch.from_numpy(det_head_bboxes.astype(np.float32))
@@ -372,7 +393,19 @@ class VideoAttentionTargetDataset_temporal(Dataset):
 
                 # Load annotations for selected person ids
                 img_annotations = self.annotations.get_group(path)
-                pids_ann = img_annotations["person_id"].values 
+                # pids_ann = img_annotations["person_id"].values 
+
+                head_bboxes = img_annotations['head_bboxes']
+                head_bboxes = torch.from_numpy(head_bboxes.values[0].astype(np.float32))
+                pids_ann = np.arange(len(head_bboxes))
+
+                head_bbox_img = img_annotations['head_bboxes']
+                head_bbox_img = torch.from_numpy(head_bbox_img.values[0].astype(np.float32))
+                gaze_pt_img = img_annotations['gaze_points']
+                gaze_pt_img = torch.from_numpy(gaze_pt_img.values[0].astype(np.float32))
+                inout_img = img_annotations['inout']
+                inout_img = torch.from_numpy(inout_img.values[0].astype(np.float32))
+
                 head_bboxes = []; gaze_pts = []; inout = []; speaking_scores = []
                 for pi, pid in enumerate(person_ids_ann):
                     pid_idx = np.where(pids_ann==pid)[0]
@@ -382,15 +415,26 @@ class VideoAttentionTargetDataset_temporal(Dataset):
                         inout.append(-1)
                         speaking_scores.append(-1)
                     else:
-                        img_ann = img_annotations.iloc[pid_idx]
-                        head_bbox = img_ann[["head_xmin", "head_ymin", "head_xmax", "head_ymax"]]
-                        head_bbox = torch.from_numpy(head_bbox.values.astype(np.float32)).squeeze() 
-                        head_bboxes.append(head_bbox)
-                        gaze_pt = img_ann[["gaze_x", "gaze_y"]]
-                        gaze_pt = torch.from_numpy(gaze_pt.values.astype(np.float32)).squeeze() 
+                        # img_ann = img_annotations.iloc[pid_idx]
+
+                        # head_bbox = img_ann[["head_xmin", "head_ymin", "head_xmax", "head_ymax"]]
+                        # head_bbox = torch.from_numpy(head_bbox.values.astype(np.float32)).squeeze() 
+                        # head_bboxes.append(head_bbox)
+                        
+                        # gaze_pt = img_ann[["gaze_x", "gaze_y"]]
+                        # gaze_pt = torch.from_numpy(gaze_pt.values.astype(np.float32)).squeeze() 
+                        # gaze_pts.append(gaze_pt)
+                        
+                        head_box = head_bbox_img[pid_idx].squeeze()
+                        head_bboxes.append(head_box)
+
+                        gaze_pt = gaze_pt_img[pid_idx].squeeze()
                         gaze_pts.append(gaze_pt)
-                        io = img_ann['inout'].values.item()
+
+                        # io = img_ann['inout'].values.item()
+                        io = inout_img[pid_idx].squeeze()
                         inout.append(io)
+
                         if len(det_head_bboxes)>0:
                             pid_idx = torch.where(pids_det==index_spk[pi])[0]
                             if len(pid_idx)>0 and index_spk_keep[pi]:
@@ -504,12 +548,15 @@ class VideoAttentionTargetDataset_temporal(Dataset):
                 _, img_h, img_w = sample['image'].shape
                 sample['head_masks'] = generate_mask(head_bboxes, img_w, img_h)
 
-                # generate gaze heatmaps
-                sample["gaze_heatmaps"] = generate_gaze_heatmap(gaze_pts, sigma=self.heatmap_sigma, size=self.heatmap_size)
-
                 is_child = torch.zeros(len(heads), dtype=torch.float) - 1
                 laeo_ids = lah2laeo(lah_ids)
                 coatt_ids = lah2coatt(lah_ids)
+
+                # generate gaze heatmaps
+                sample["gaze_heatmaps"] = generate_gaze_heatmap(gaze_pts, sigma=self.heatmap_sigma, size=self.heatmap_size)
+                coatt_heatmaps, coatt_levels = generate_coatt_heatmap(sample["gaze_heatmaps"], coatt_ids, self.num_coatt, size=self.heatmap_size)
+                sample["coatt_heatmaps"] = coatt_heatmaps
+                sample["coatt_levels"] = coatt_levels
 
                 sample['lah_ids'] = lah_ids
                 sample['laeo_ids'] = laeo_ids
@@ -529,6 +576,8 @@ class VideoAttentionTargetDataset_temporal(Dataset):
                 t_sample['gaze_pts'].append(sample['gaze_pts'])
                 t_sample['gaze_vecs'].append(sample['gaze_vecs'])
                 t_sample['gaze_heatmaps'].append(sample['gaze_heatmaps'])
+                t_sample['coatt_heatmaps'].append(sample['coatt_heatmaps'])
+                t_sample['coatt_levels'].append(sample['coatt_levels'])
                 t_sample['inout'].append(sample['inout'])
                 t_sample['lah_ids'].append(sample['lah_ids'])
                 t_sample['laeo_ids'].append(sample['laeo_ids'])
