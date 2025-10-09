@@ -74,7 +74,7 @@ class VideoCoAttDataset_temporal(Dataset):
         
         # load annotations
         self.annotations, self.paths, = self.load_annotations()
-        
+
         # load speaking status file
         # self.df_speaking = self.load_annotations_speaker()
         # self.df_speaking = self.df_speaking.groupby('path')
@@ -237,10 +237,12 @@ class VideoCoAttDataset_temporal(Dataset):
             batch_num_heads = self.num_people
         else:
             batch_num_heads = num_heads
-
+        
         person_ids = person_ids[:num_keep]
+        '''
         person_ids_ann = person_ids[person_ids<self.pid_offset]
         person_ids_det = person_ids[person_ids>=self.pid_offset]
+        '''
         
         # randomly choose to apply the horizontal flip augmentation
         self.horizontal_flip = False
@@ -298,6 +300,7 @@ class VideoCoAttDataset_temporal(Dataset):
                 ###########################################
                 # Get annotations
                 ###########################################
+
                 # Load image
                 img_path = os.path.join(self.root, self.image_dir_name, path)
                 image = Image.open(img_path)  
@@ -306,6 +309,7 @@ class VideoCoAttDataset_temporal(Dataset):
                 pcd = torch.zeros((3, img_h, img_w), dtype=torch.float32)
                 
                 # get annotated person bboxes
+                img_annotations = self.annotations.get_group(path)
                 # head_bboxes = []
                 # if path in self.annotations.groups.keys():
                     # img_annotations = self.annotations.get_group(path)
@@ -349,19 +353,22 @@ class VideoCoAttDataset_temporal(Dataset):
                 # Load annotations of coatt pairs and generate coatt ids
                 coatt_pairs = img_annotations['coatt_pairs'].values[0]
                 pairs = img_annotations['pairs'].values[0]
+                pids = img_annotations["person_ids"].values[0]
+                pid2idx = {pid: i for i, pid in enumerate(pids)}
+                pairs = [(pid2idx[i], pid2idx[j]) for i,j in pairs]
 
                 # define the dict in which key: original person id, value: the order of the person id in this sample
-                pids_ann_ori_set = set(pairs.flatten())
-                pids_temp_to_stat_dict = {pid: pi for pi, pid in enumerate(sorted(pids_ann_ori_set))}
+                # pids_ann_ori_set = set(pairs.flatten())
+                # pids_temp_to_stat_dict = {pid: pi for pi, pid in enumerate(sorted(pids_ann_ori_set))}
 
                 coatt_p_ids = {}
                 for pair_idx, coatt_pair in enumerate(coatt_pairs):
                     if coatt_pair == 1:
                         pair = pairs[pair_idx]
                         pid_1, pid_2 = map(int, pair)
-                        pid_1 = pids_temp_to_stat_dict[pid_1]
-                        pid_2 = pids_temp_to_stat_dict[pid_2]
-                        
+                        # pid_1 = pids_temp_to_stat_dict[pid_1]
+                        # pid_2 = pids_temp_to_stat_dict[pid_2]
+
                         find_coatt_id = False
                         for coatt_id, p_ids in coatt_p_ids.items():
                             if (pid_1 in p_ids) or (pid_2 in p_ids):
@@ -376,16 +383,23 @@ class VideoCoAttDataset_temporal(Dataset):
                 gaze_pt_img = img_annotations['gaze_points']
                 gaze_pt_img = torch.from_numpy(gaze_pt_img.values[0].astype(np.float32))
 
-                for pi, pid in enumerate(person_ids_ann):
-                    pid_idx = np.where(pids_ann==pid)[0]
-                    if len(pid_idx)==0:
+                for pid in sorted(pids):
+                    # pid_idx = np.where(pids==pid)[0]
+                    pid_idx = pid2idx[pid]
+                # for pi, pid in enumerate(person_ids_ann):
+                    # pid_idx = np.where(pids_ann==pid)[0]
+                    # pid_idx = pid2idx[pid.item()]
+                    # if len(pid_idx)==0:
+                    if pid_idx == 0:
                         head_bboxes.append(torch.zeros(4, dtype=torch.float32))
                         gaze_pts.append(torch.zeros(2, dtype=torch.float32)-1)
                         coatt_ids.append(0)
                         speaking_scores.append(-1)
                     else:
-                        if len(pid_idx)>1:
-                            pid_idx = pid_idx[:1]
+                        # if len(pid_idx)>1:
+                            # print(pids, pid_idx)
+                            # print('error: more than one same pid!')
+                            # pid_idx = pid_idx[:1]
 
                         head_box = head_bbox_img[pid_idx].squeeze()
                         head_bboxes.append(head_box)
@@ -396,7 +410,9 @@ class VideoCoAttDataset_temporal(Dataset):
                         # get coatt id
                         find_coatt_id = False
                         for coatt_id, p_ids in coatt_p_ids.items():
-                            if pid in p_ids:
+                            # if pid in p_ids:
+                            # if pid2idx[pid] in p_ids:
+                            if pid_idx in p_ids:
                                 coatt_ids.append(coatt_id)
                                 find_coatt_id = True
                                 break
@@ -411,7 +427,6 @@ class VideoCoAttDataset_temporal(Dataset):
                         '''
 
                         speaking_scores.append(-1)
-
 
                 '''
                 # Process detected head bboxes
@@ -572,19 +587,35 @@ class VideoCoAttDataset_temporal(Dataset):
                 t_sample['img_size'].append(sample['img_size'])
                 t_sample['path'].append(path)
 
+        '''
         for key, item in t_sample.items():
             if key not in ['dataset', 'path', 'pids']:
                 t_sample[key] = torch.stack(t_sample[key], axis=0).squeeze()
                 if self.temporal_context==0:
                     t_sample[key] = t_sample[key].unsqueeze(0)
         return t_sample
+        '''
 
+        try:
+            for key, item in t_sample.items():
+                if key not in ['dataset', 'path', 'pids']:
+                    t_sample[key] = torch.stack(t_sample[key], axis=0).squeeze()
+                    if self.temporal_context==0:
+                        t_sample[key] = t_sample[key].unsqueeze(0)
+            return t_sample
+        except RuntimeError as e:
+            print(f"RuntimeError at index {index}, path: {path}, num_heads: {num_heads}, num_keep: {num_keep}, batch_num_heads: {batch_num_heads}, num_valid_heads: {num_valid_heads}, num_missing_heads: {num_missing_heads}")
+            print(self.num_people)
+            raise e
+        
     def __len__(self):
         # return len(self.paths)
 
+        # self.use_ratio = 0.01
+        # self.use_ratio = 0.03
         # self.use_ratio = 0.1
-        # self.use_ratio = 0.5
-        self.use_ratio = 1.0
+        self.use_ratio = 0.5
+        # self.use_ratio = 1.0
         return int(len(self.paths) * self.use_ratio)
 
 # ============================================================================================================ #

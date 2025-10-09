@@ -117,7 +117,7 @@ def compute_interact_loss(gaze_vec_gt, gaze_hm_gt, inout_gt, gaze_vec_pred, gaze
 
     return total_loss, logs
 
-def compute_coatt_loss(coatt_hm_gt, coatt_hm_pred, coatt_level_gt, coatt_level_pred):
+def compute_coatt_loss(coatt_hm_gt, coatt_hm_pred, coatt_level_gt, coatt_level_pred, person_tokens):
     if len(coatt_hm_gt.shape) == 4:  # if the input is a single frame
         b, coatt_num, h, w = coatt_hm_gt.shape
         t = 1
@@ -154,13 +154,86 @@ def compute_coatt_loss(coatt_hm_gt, coatt_hm_pred, coatt_level_gt, coatt_level_p
     cost_minimums_level = cost_matrix_level[torch.arange(cost_matrix_level.shape[0]).unsqueeze(1), row_ind, col_ind]
     cost_loss_level = torch.mean(cost_minimums_level)
 
+    # compute a loss function in which person_tokes joining the same group are close in the feature space
+    coatt_level_gt = coatt_level_gt.view(b, t, coatt_num, -1)  # (b, t, coatt_num, people_num)
+
+    temp_param = 0.2
+    con_loss = 0.0
+    for b_idx in range(b):
+        for t_idx in range(t):
+            for coatt_idx in range(coatt_num):
+                coatt_level_gt_curr = coatt_level_gt[b_idx, t_idx, coatt_idx]  # (people_num,)
+                if torch.sum(coatt_level_gt_curr) <= 1:
+                    continue
+                person_tokens_all = person_tokens[b_idx, t_idx]  # (n, token_dim)
+                person_tokens_grp = person_tokens_all[coatt_level_gt_curr==1]  # (num_in_group, token_dim)
+                for person_idx in range(coatt_level_gt_curr.shape[0]):
+                    person_tokens_target = person_tokens[b_idx, t_idx, person_idx]  # (token_dim,)
+                    con_loss_den = torch.sum(torch.exp(torch.cosine_similarity(person_tokens_target.unsqueeze(0), person_tokens_all, dim=-1)) / temp_param).sum()
+                    con_loss_mol = torch.sum(torch.exp(torch.cosine_similarity(person_tokens_target.unsqueeze(0), person_tokens_grp, dim=-1)) / temp_param).sum()
+                    con_loss_curr = - torch.log((con_loss_mol + 1e-6) / (con_loss_den + 1e-6))
+                    con_loss += con_loss_curr
+    con_loss = con_loss / (b * t * coatt_num * coatt_level_gt.shape[-1])
+
     logs = {
         "coatt_loss": coatt_loss.item(),
         "coatt_hm_loss": cost_loss_hm.item(),
         "coatt_level_loss": cost_loss_level.item(),
+        "con_loss": con_loss,
     }
 
-    return coatt_loss, logs
+    return coatt_loss, con_loss, logs
+
+# def compute_coatt_loss(coatt_hm_gt, coatt_hm_pred, coatt_level_gt, coatt_level_pred):
+#     # Check shape to handle both single frame and sequence of frames
+#     if len(coatt_hm_gt.shape) == 5:
+#         b, t, coatt_num, h, w = coatt_hm_gt.shape
+#         coatt_hm_gt = coatt_hm_gt.view(b * t, coatt_num, h, w)
+#         coatt_hm_pred = coatt_hm_pred.view(b * t, coatt_num, h, w)
+#         coatt_level_gt = coatt_level_gt.view(b * t, coatt_num, -1)
+#         coatt_level_pred = coatt_level_pred.view(b * t, coatt_num, -1)
+#     else: # len(coatt_hm_gt.shape) == 4
+#         b, coatt_num, h, w = coatt_hm_gt.shape
+#         t = 1
+#         coatt_level_gt = coatt_level_gt.view(b, coatt_num, -1)
+#         coatt_level_pred = coatt_level_pred.view(b, coatt_num, -1)
+    
+#     # Flatten the heatmaps for cdist
+#     coatt_hm_gt_flat = coatt_hm_gt.view(b * t, coatt_num, h * w)
+#     coatt_hm_pred_flat = coatt_hm_pred.view(b * t, coatt_num, h * w)
+
+#     # Compute cost matrix for coatt heatmaps
+#     cost_matrix_hm = torch.cdist(coatt_hm_gt_flat, coatt_hm_pred_flat, p=2)
+
+#     # Compute cost matrix for coatt levels using efficient broadcasting
+#     cost_matrix_level = F.binary_cross_entropy_with_logits(
+#         coatt_level_pred.unsqueeze(1).expand(-1, coatt_num, -1, -1),
+#         coatt_level_gt.unsqueeze(2).expand(-1, -1, coatt_num, -1).float(),
+#         reduction="none"
+#     ).mean(dim=-1)
+
+#     # Combine all cost matrices
+#     cost_matrix = cost_matrix_hm + cost_matrix_level
+
+#     # Solve the linear assignment problem
+#     assignment = batch_linear_assignment(cost_matrix)
+#     row_ind, col_ind = assignment_to_indices(assignment)
+    
+#     # Use torch.gather for efficient indexing
+#     cost_minimums = torch.gather(cost_matrix, 1, col_ind.unsqueeze(1).repeat(1, 1, coatt_num)).squeeze(1)
+#     coatt_loss = cost_minimums.mean()
+
+#     # Compute individual loss components more efficiently
+#     cost_loss_hm = torch.gather(cost_matrix_hm, 1, col_ind.unsqueeze(1).repeat(1, 1, coatt_num)).squeeze(1).mean()
+#     cost_loss_level = torch.gather(cost_matrix_level, 1, col_ind.unsqueeze(1).repeat(1, 1, coatt_num)).squeeze(1).mean()
+
+#     logs = {
+#         "coatt_loss": coatt_loss.item(),
+#         "coatt_hm_loss": cost_loss_hm.item(),
+#         "coatt_level_loss": cost_loss_level.item(),
+#     }
+
+#     return coatt_loss, logs
 
 def compute_sharingan_loss(gaze_vec_gt, gaze_pt_gt, inout_gt, gaze_vec_pred, gaze_pt_pred, inout_pred, epoch=None):
     heatmap_loss = torch.tensor(0.0)

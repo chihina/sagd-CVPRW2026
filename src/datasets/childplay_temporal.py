@@ -56,6 +56,7 @@ class ChildPlayDataset_temporal(Dataset):
         dim_vlm = 117
     ):
         super().__init__()
+        self.cfg = cfg
         self.root = root
         self.root_depth = root_depth
         self.root_focal = root_focal
@@ -84,6 +85,10 @@ class ChildPlayDataset_temporal(Dataset):
         # self.annotations = self._load_annotations()
         self.annotations, self.paths = self._load_annotations()
         
+        paths_orignal = self.paths
+        self.paths = [p for p in self.paths if self.valid_data(p)]
+        print(f'[ChildPlay]: {len(self.paths)}/{len(paths_orignal)} valid data in {self.split} set')
+
          # load speaking status file
         # self.df_speaking = self.load_annotations_speaker()
         # self.df_speaking = self.df_speaking.groupby('path')
@@ -99,7 +104,23 @@ class ChildPlayDataset_temporal(Dataset):
         # loaded_vlm_context = load_pkl(path_to_vlm)
         # self.loaded_vlm_context = loaded_vlm_context
         # del loaded_vlm_context
-        
+
+    def valid_data(self, path):
+        # clip = path.split('/')[1]
+        # video_id, interval = clip.rsplit('_', 1)
+        # frame = int(path.split('/')[-1].split('.')[0].split('_')[-1])
+        # curr_frame_nb = frame
+        # frame_nbs = np.arange(curr_frame_nb-(self.temporal_stride*self.temporal_context), curr_frame_nb+(self.temporal_stride*self.temporal_context)+1, self.temporal_stride)
+        # for f in frame_nbs:
+        #     img_name = f'{video_id}_{f}.jpg'
+        #     path = os.path.join('images', clip, img_name)
+        #     if not os.path.exists(os.path.join(self.root, path)):
+        #         return False
+
+        # return True
+
+        return os.path.exists(os.path.join(self.root, path))
+
     def load_annotations_speaker(self):
         annotation_files = glob(os.path.join('/idiap/temp/agupta/data/child-play/speaker_corr/', f"*.csv"))
 
@@ -227,7 +248,12 @@ class ChildPlayDataset_temporal(Dataset):
         # get current frame num
         # clip = img_annotations['clip'].values[0]
         # video_id, interval = clip.replace('-downsample', '').rsplit('_', 1)
+
+        clip = path.split('/')[1]
+        video_id, interval = clip.rsplit('_', 1)
         # offset = int(interval.split('-')[0])
+        # print(video_id, interval, clip, offset, curr_frame_nb, path)
+
         # curr_frame_nb = img_annotations['frame'].values[0]
         # img_name = f'{video_id}_{offset + curr_frame_nb - 1}.jpg'
         # path = os.path.join('images', clip, img_name)
@@ -291,16 +317,29 @@ class ChildPlayDataset_temporal(Dataset):
                 rand_indices = torch.randperm(len(pids_det))
                 pids_det = pids_det[rand_indices]
         
+        '''
         # keep up to num_people ids
         person_ids = np.concatenate([pids_ann, pids_det])
         num_heads = len(person_ids)
         num_keep = num_heads
         if self.num_people!='all':
+            batch_num_heads = self.num_people
             if num_heads>1:
                 num_keep = np.random.randint(2, min(num_heads, self.num_people)+1)
+        else:
+            batch_num_heads = num_heads
+        '''
+
+        person_ids = pids_ann
+        num_heads = len(person_ids)
+        num_keep = num_heads
+
+        if self.num_people!='all':
             batch_num_heads = self.num_people
         else:
             batch_num_heads = num_heads
+        
+
         person_ids = person_ids[:num_keep]
         person_ids_ann = person_ids[person_ids<self.pid_offset]
         person_ids_det = person_ids[person_ids>=self.pid_offset]
@@ -345,6 +384,8 @@ class ChildPlayDataset_temporal(Dataset):
         for frame_nb in frame_nbs:
             # check if frame exists
             # if not (clip, frame_nb) in self.annotations.groups.keys():
+            img_name = f'{video_id}_{frame_nb}.jpg'
+            path = os.path.join('images', clip, img_name)
             if not path in self.annotations.groups.keys():
                 t_sample['image'].append(torch.zeros((3, self.image_size[1], self.image_size[0]), dtype=torch.float32))
                 t_sample['heads'].append(torch.zeros((batch_num_heads+1, 3, 224, 224), dtype=torch.float32))
@@ -354,6 +395,8 @@ class ChildPlayDataset_temporal(Dataset):
                 t_sample['gaze_pts'].append(torch.zeros((batch_num_heads+1, 2), dtype=torch.float32)-1)
                 t_sample['gaze_vecs'].append(torch.zeros((batch_num_heads+1, 2), dtype=torch.float32))
                 t_sample['gaze_heatmaps'].append(torch.zeros((batch_num_heads+1, self.heatmap_size, self.heatmap_size), dtype=torch.float32))
+                t_sample['coatt_heatmaps'].append(torch.zeros((self.num_coatt, self.heatmap_size, self.heatmap_size), dtype=torch.float32))
+                t_sample['coatt_levels'].append(torch.zeros((self.num_coatt, batch_num_heads+1), dtype=torch.int))
                 t_sample['inout'].append(torch.zeros((batch_num_heads+1), dtype=torch.float32)-1)
                 t_sample['lah_ids'].append(torch.zeros((batch_num_heads+1), dtype=torch.long)-3)
                 t_sample['laeo_ids'].append(torch.zeros((batch_num_heads+1), dtype=torch.long))
@@ -377,11 +420,12 @@ class ChildPlayDataset_temporal(Dataset):
                 ###########################################
                 # Load image
                 # img_name = f'{video_id}_{offset + frame_nb - 1}.jpg'
-                # path = os.path.join('images', clip, img_name)
+                img_name = f'{video_id}_{frame_nb}.jpg'
+                path = os.path.join('images', clip, img_name)
                 img_path = os.path.join(self.root, path)
                 image = Image.open(img_path)  
                 img_w, img_h = image.size
-                
+
                 pcd = torch.zeros((3, img_h, img_w), dtype=torch.float32)
                 if self.return_depth:
                     # Load focal length, depth map
@@ -414,22 +458,63 @@ class ChildPlayDataset_temporal(Dataset):
                 head_bbox_img = torch.from_numpy(head_bbox_img.values[0].astype(np.float32))
                 gaze_pt_img = img_annotations['gaze_points']
                 gaze_pt_img = torch.from_numpy(gaze_pt_img.values[0].astype(np.float32))
+                inout_img = img_annotations['inout']
+                inout_img = torch.from_numpy(inout_img.values[0].astype(np.float32))
 
                 pids_ann = np.arange(len(head_bboxes))
                 person_ids_ann = np.unique(pids_ann)
 
                 head_bboxes = []; gaze_pts = []; inout = []; gt_speaking = []; speaking_scores = []; is_child = []
+                coatt_ids = []
 
-                for pi, pid in enumerate(person_ids_ann):
-                    pid_idx = np.where(pids_ann==pid)[0]
-                    if len(pid_idx)==0:
+                # Load annotations of coatt pairs and generate coatt ids
+                coatt_pairs = img_annotations['coatt_pairs'].values[0]
+                pairs = img_annotations['pairs'].values[0]
+                pids = img_annotations["person_ids"].values[0]
+                pid2idx = {pid: i for i, pid in enumerate(pids)}
+                pairs = [(pid2idx[i], pid2idx[j]) for i,j in pairs]
+
+                # define the dict in which key: original person id, value: the order of the person id in this sample
+                # pids_ann_ori_set = set(pairs.flatten())
+                # pids_temp_to_stat_dict = {pid: pi for pi, pid in enumerate(sorted(pids_ann_ori_set))}
+
+                coatt_p_ids = {}
+                for pair_idx, coatt_pair in enumerate(coatt_pairs):
+                    if coatt_pair == 1:
+                        pair = pairs[pair_idx]
+                        pid_1, pid_2 = map(int, pair)
+                        # pid_1 = pids_temp_to_stat_dict[pid_1]
+                        # pid_2 = pids_temp_to_stat_dict[pid_2]
+                        
+                        find_coatt_id = False
+                        for coatt_id, p_ids in coatt_p_ids.items():
+                            if (pid_1 in p_ids) or (pid_2 in p_ids):
+                                coatt_p_ids[coatt_id].add(pid_1)
+                                coatt_p_ids[coatt_id].add(pid_2)
+                                find_coatt_id = True
+                        if not find_coatt_id:
+                            coatt_p_ids[len(coatt_p_ids)+1] = set([pid_1, pid_2])
+
+                for pid in sorted(pids):
+                    # pid_idx = np.where(pids==pid)[0]
+                    pid_idx = pid2idx[pid]
+                # for pi, pid in enumerate(person_ids_ann):
+                    # pid_idx = np.where(pids_ann==pid)[0]
+                    # if len(pid_idx)==0:
+                    if pid_idx == 0:
                         head_bboxes.append(torch.zeros(4, dtype=torch.float32))
                         gaze_pts.append(torch.zeros(2, dtype=torch.float32)-1)
                         inout.append(-1)
+                        coatt_ids.append(0)
                         gt_speaking.append(-1)
                         speaking_scores.append(-1)
                         is_child.append(-1)
                     else:
+                        # if len(pid_idx)>1:
+                            # print(pids, pid_idx)
+                            # print('error: more than one same pid!')
+                            # pid_idx = pid_idx[:1]
+
                         # img_ann = img_annotations.iloc[pid_idx]
                         # head_bbox = img_ann[["head_xmin", "head_ymin", "head_xmax", "head_ymax"]]
                         # head_bbox = torch.from_numpy(head_bbox.values.astype(np.float32)).squeeze() 
@@ -443,12 +528,24 @@ class ChildPlayDataset_temporal(Dataset):
                         
                         # is_child.append(img_ann['is_child'].values[0])
                         is_child.append(-1)
-                        io = -1
+                        # io = -1
                         # if img_ann['gaze_class'].values=='inside_visible':
                             # io = 1
                         # elif img_ann['gaze_class'].values=='outside_frame':
                             # io = 0
+                        io = inout_img[pid_idx].squeeze().item()
                         inout.append(io)
+                        
+                        # get coatt id
+                        find_coatt_id = False
+                        for coatt_id, p_ids in coatt_p_ids.items():
+                            if pid_idx in p_ids:
+                                coatt_ids.append(coatt_id)
+                                find_coatt_id = True
+                                break
+                        if not find_coatt_id:
+                            coatt_ids.append(0)
+                        
                         si = -1
                         # if img_ann['speaking_status'].values in ['speaking', 'vocalizing', 'laughing']:
                             # si = 1
@@ -465,22 +562,23 @@ class ChildPlayDataset_temporal(Dataset):
                             speaking_scores.append(-1)
 
                 # Process detected head bboxes
-                if len(det_head_bboxes) > 0:
-                    # merge annotated head bboxes
-                    for pid in person_ids_det:
-                        pid_idx = np.where(pids_det==pid)[0]
-                        gaze_pts.append(torch.zeros(2, dtype=torch.float32)-1)
-                        inout.append(-1)
-                        gt_speaking.append(-1)
-                        is_child.append(-1)
-                        if len(pid_idx)==0:
-                            speaking_scores.append(-1)
-                            head_bboxes.append(torch.zeros(4, dtype=torch.float32))
-                        else:
-                            speaking_scores.append(speaking_det[pid_idx])
-                            head_bboxes.append(det_head_bboxes[pid_idx].squeeze())
+                # if len(det_head_bboxes) > 0:
+                #     # merge annotated head bboxes
+                #     for pid in person_ids_det:
+                #         pid_idx = np.where(pids_det==pid)[0]
+                #         gaze_pts.append(torch.zeros(2, dtype=torch.float32)-1)
+                #         inout.append(-1)
+                #         gt_speaking.append(-1)
+                #         is_child.append(-1)
+                #         if len(pid_idx)==0:
+                #             speaking_scores.append(-1)
+                #             head_bboxes.append(torch.zeros(4, dtype=torch.float32))
+                #         else:
+                #             speaking_scores.append(speaking_det[pid_idx])
+                #             head_bboxes.append(det_head_bboxes[pid_idx].squeeze())
 
                 # stack annotations
+                coatt_ids = torch.tensor(coatt_ids, dtype=torch.long)
                 head_bboxes = torch.stack(head_bboxes)
                 gaze_pts = torch.stack(gaze_pts)
                 inout = torch.tensor(inout, dtype=torch.float)
@@ -538,8 +636,16 @@ class ChildPlayDataset_temporal(Dataset):
 
                 # Extract Heads
                 heads = []
+                # for head_bbox in head_bboxes:
+                    # heads.append(image.crop(head_bbox.int().tolist()))
                 for head_bbox in head_bboxes:
+                    # add to use normalized head bboxes nk
+                    head_xmin, head_ymin, head_xmax, head_ymax = head_bbox.tolist()
+                    head_xmin, head_xmax = map(lambda x: int(x * img_w), (head_xmin, head_xmax))
+                    head_ymin, head_ymax = map(lambda x: int(x * img_h), (head_ymin, head_ymax))
+                    head_bbox = torch.tensor([head_xmin, head_ymin, head_xmax, head_ymax], dtype=torch.float32)
                     heads.append(image.crop(head_bbox.int().tolist()))
+
                 num_valid_heads = len(heads)
                 num_missing_heads = max(self.num_people + 1 - num_valid_heads, 1) if self.num_people != "all" else 1    # pad at least one person
 
@@ -564,10 +670,10 @@ class ChildPlayDataset_temporal(Dataset):
                             lah_ids[i] = -1
 
                 # Create (Normalized) Gaze Points
-                gaze_pts[gaze_pts[:, 0] != -1.] /= torch.tensor([img_w, img_h])
+                # gaze_pts[gaze_pts[:, 0] != -1.] /= torch.tensor([img_w, img_h])
 
                 # Normalize Head Bboxes
-                head_bboxes /= torch.tensor([img_w, img_h, img_w, img_h], dtype=float)
+                # head_bboxes /= torch.tensor([img_w, img_h, img_w, img_h], dtype=float)
 
                 # Build Sample
                 sample = {
@@ -599,6 +705,7 @@ class ChildPlayDataset_temporal(Dataset):
                     heads = torch.cat([torch.zeros((num_missing_heads, 3, 224, 224), dtype=torch.float32), heads])
                     gaze_pts = torch.cat([torch.zeros((num_missing_heads, 2), dtype=torch.float32)-1, gaze_pts])
                     inout = torch.cat([torch.zeros((num_missing_heads, ), dtype=torch.float32)-1, inout])
+                    coatt_ids = torch.cat([torch.zeros((num_missing_heads, ), dtype=torch.long), coatt_ids])
                     lah_ids[lah_ids>=0] += num_missing_heads
                     lah_ids = torch.cat([torch.zeros((num_missing_heads, ), dtype=torch.long)-3, lah_ids])
                     speaking_scores = torch.cat([torch.zeros((num_missing_heads, ), dtype=torch.float32)-1, speaking_scores])
@@ -639,7 +746,7 @@ class ChildPlayDataset_temporal(Dataset):
                     sample['cam2eye'] = cam2eye
 
                 laeo_ids = lah2laeo(lah_ids)
-                coatt_ids = lah2coatt(lah_ids)
+                # coatt_ids = lah2coatt(lah_ids)
 
                 # generate gaze heatmaps
                 sample["gaze_heatmaps"] = generate_gaze_heatmap(gaze_pts, sigma=self.heatmap_sigma, size=self.heatmap_size)
@@ -696,8 +803,12 @@ class ChildPlayDataset_temporal(Dataset):
 
     def __len__(self):
         # return len(self.keys)
-        return len(self.paths)
-    
+        # return len(self.paths)
+
+        # self.use_ratio = 0.05
+        # self.use_ratio = 0.1
+        self.use_ratio = 1.0
+        return int(len(self.paths) * self.use_ratio)
 
 # ============================================================================================================ #
 #                                              CHILDPLAY DATA MODULE                                          #
@@ -708,6 +819,7 @@ IMG_STD = [0.28674, 0.27776, 0.27995]
 class ChildPlayDataModule(pl.LightningDataModule):
     def __init__(
         self,
+        cfg,
         root: str,
         root_depth,
         root_focal,
@@ -722,6 +834,7 @@ class ChildPlayDataModule(pl.LightningDataModule):
     ):  
         
         super().__init__()
+        self.cfg = cfg
         self.root = root
         self.root_depth = root_depth
         self.root_focal = root_focal
@@ -763,6 +876,7 @@ class ChildPlayDataModule(pl.LightningDataModule):
                 ]
             )
             self.train_dataset = ChildPlayDataset_temporal(
+                cfg=self.cfg,
                 root=self.root,
                 root_depth=self.root_depth,
                 root_focal=self.root_focal, 
@@ -789,6 +903,7 @@ class ChildPlayDataModule(pl.LightningDataModule):
                 ]
             )
             self.val_dataset = ChildPlayDataset_temporal(
+                cfg=self.cfg,
                 root=self.root,
                 root_depth=self.root_depth,
                 root_focal=self.root_focal, 
@@ -816,6 +931,7 @@ class ChildPlayDataModule(pl.LightningDataModule):
                 ]
             )
             self.val_dataset = ChildPlayDataset_temporal(
+                cfg=self.cfg,
                 root=self.root,
                 root_depth=self.root_depth,
                 root_focal=self.root_focal, 
@@ -843,6 +959,7 @@ class ChildPlayDataModule(pl.LightningDataModule):
                 ]
             )
             self.test_dataset = ChildPlayDataset_temporal(
+                cfg=self.cfg,
                 root=self.root,
                 root_depth=self.root_depth,
                 root_focal=self.root_focal, 
@@ -871,6 +988,7 @@ class ChildPlayDataModule(pl.LightningDataModule):
                 ]
             )
             self.predict_dataset = ChildPlayDataset_temporal(
+                cfg=self.cfg,
                 root=self.root, 
                 split="test",
                 stride=1,

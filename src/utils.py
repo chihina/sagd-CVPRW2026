@@ -4,7 +4,6 @@ from typing import List, Tuple, Union
 import itertools
 import numpy as np
 import pickle
-
 import einops
 import torch
 import torch.nn.functional as F
@@ -545,9 +544,51 @@ def id_to_pairwise_coatt(coatt_ids):
         i = indices[k, 0]
         j = indices[k, 1]
         pairwise_coatt[:, k] = is_coatt(coatt_ids[:, i], coatt_ids[:, j])
-        mask[:, k] = (coatt_ids[:, i] != 0) & (coatt_ids[:, j] != 0) & ((coatt_ids[:,i]!=-100) | (coatt_ids[:,j]!=-100))
-        # mask[:, k] = ((coatt_ids[:,i]!=-100) | (coatt_ids[:,j]!=-100))
-        
+        # mask[:, k] = (coatt_ids[:, i] != 0) & (coatt_ids[:, j] != 0) & ((coatt_ids[:,i]!=-100) | (coatt_ids[:,j]!=-100))
+        mask[:, k] = ((coatt_ids[:,i]!=-100) | (coatt_ids[:,j]!=-100))
+    
+    return pairwise_coatt, mask
+
+def is_coatt_vectorized(ids_i, ids_j):
+    """
+    A vectorized version of the is_coatt logic.
+    Assumes co-attention if IDs are the same and are valid (e.g., > 0).
+    -100 is treated as an invalid person ID.
+    """
+    # People are in co-attention if they have the same ID, and that ID is not 0 or -100
+    # Adjust this logic based on your specific definition of a valid co-attention ID.
+    return (ids_i == ids_j) & (ids_i != -1)
+
+def id_to_pairwise_coatt_vectorized(coatt_ids):
+    """
+    A vectorized version of id_to_pairwise_coatt that avoids Python for-loops
+    for significant speedup.
+    """
+    if coatt_ids.ndim == 1:
+        coatt_ids = coatt_ids.unsqueeze(0)
+    
+    batch_size, num_people = coatt_ids.shape
+
+    # If there's only one person, no pairs can be formed.
+    if num_people < 2:
+        return torch.empty((batch_size, 0), device=coatt_ids.device), \
+               torch.empty((batch_size, 0), device=coatt_ids.device, dtype=bool)
+
+    # 1. Generate all pair indices at once
+    # Use .to(device) to ensure indices are on the same device as the input
+    indices = torch.tensor(list(itertools.permutations(range(num_people), 2)), device=coatt_ids.device)
+    i_indices = indices[:, 0]
+    j_indices = indices[:, 1]
+
+    # 2. Gather the coatt_ids for all 'i' and 'j' pairs across the batch in one go
+    # Shape of both ids_i and ids_j will be (batch_size, num_pairs)
+    ids_i = coatt_ids[:, i_indices]
+    ids_j = coatt_ids[:, j_indices]
+
+    # 3. Apply the co-attention and mask logic to all pairs simultaneously (vectorized)
+    pairwise_coatt = is_coatt_vectorized(ids_i, ids_j).float() # Use .float() to convert boolean to 0.0s and 1.0s
+    mask = (ids_i != -100) | (ids_j != -100)
+    
     return pairwise_coatt, mask
 
 # function to get pairwise LAEO labels
@@ -573,6 +614,32 @@ def id_to_pairwise_laeo(coatt_ids):
         
     return pairwise_coatt, mask
 
+def id_to_pairwise_laeo_vectorized(coatt_ids):
+    if coatt_ids.ndim == 1:
+        coatt_ids = coatt_ids.unsqueeze(0)
+    
+    batch_size, num_people = coatt_ids.shape
+
+    if num_people < 2:
+        return torch.empty((batch_size, 0), device=coatt_ids.device), \
+               torch.empty((batch_size, 0), device=coatt_ids.device, dtype=bool)
+
+    indices = torch.tensor(list(itertools.permutations(range(num_people), 2)), device=coatt_ids.device)
+    i_indices = indices[:, 0]
+    j_indices = indices[:, 1]
+
+    ids_i = coatt_ids[:, i_indices]  # shape: (batch_size, num_pairs)
+    ids_j = coatt_ids[:, j_indices]  # shape: (batch_size, num_pairs)
+
+    pairwise_coatt = is_coatt_vectorized(ids_i, ids_j).float()
+    
+    mask = (ids_i != 0) & \
+           (ids_j != 0) & \
+           ((ids_i > 0) | (ids_j > 0)) & \
+           ((ids_i + ids_j) != 0)
+    
+    return pairwise_coatt, mask
+
 # function to get pairwise LAH labels
 # -5: valid head, unknown lah label, -3: padded head, -1: not lah, >=0: lah head index
 def id_to_pairwise_lah(lah_ids):
@@ -596,6 +663,28 @@ def id_to_pairwise_lah(lah_ids):
         pairwise_lah[:, k] = (lah_ids[:, j]==i)
         mask[:, k] = (lah_ids[:, j] != -5) & (lah_ids[:, j] != -3) #& (lah_ids[:, i] != -3) 
         
+    return pairwise_lah, mask
+
+def id_to_pairwise_lah_vectorized(lah_ids):
+    if lah_ids.ndim == 1:
+        lah_ids = lah_ids.unsqueeze(0)
+    
+    batch_size, num_people = lah_ids.shape
+
+    if num_people < 2:
+        return torch.empty((batch_size, 0), device=lah_ids.device), \
+               torch.empty((batch_size, 0), device=lah_ids.device, dtype=bool)
+
+    indices = torch.tensor(list(itertools.permutations(range(num_people), 2)), device=lah_ids.device)
+    i_indices = indices[:, 0]
+    j_indices = indices[:, 1]
+
+    ids_j = lah_ids[:, j_indices]  # shape: (batch_size, num_pairs)
+
+    pairwise_lah = (ids_j == i_indices).float()
+    
+    mask = (ids_j != -5) & (ids_j != -3)
+    
     return pairwise_lah, mask
 
 # function to convert laeo ids to lah ids

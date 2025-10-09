@@ -11,6 +11,7 @@ import lightning.pytorch as pl
 import torch
 import torchvision.transforms.functional as TF ###### !!
 from torch.utils.data import DataLoader, Dataset, ConcatDataset
+from torch.utils.data.dataloader import default_collate
 
 from src.utils import Stage, pair ###### !!
 from src.transforms import (
@@ -129,18 +130,18 @@ class CombinedSocialDataModule(pl.LightningDataModule):
                 temporal_stride=self.temporal_stride,
                 image_size=self.image_size
             )
-            # dataset_childplay = ChildPlayDataset_temporal(
-            #     cfg=self.cfg,
-            #     root=self.root_childplay, 
-            #     split="train", 
-            #     stride=max(3, self.temporal_context*self.temporal_stride*2),
-            #     transform=train_transform, 
-            #     tr=(-0.1, 0.1), 
-            #     num_people=self.num_people['train'],
-            #     temporal_context=self.temporal_context,
-            #     temporal_stride=self.temporal_stride,
-            #     image_size=self.image_size
-            # )
+            dataset_childplay = ChildPlayDataset_temporal(
+                cfg=self.cfg,
+                root=self.root_childplay, 
+                split="train", 
+                stride=max(3, self.temporal_context*self.temporal_stride*2),
+                transform=train_transform, 
+                tr=(-0.1, 0.1), 
+                num_people=self.num_people['train'],
+                temporal_context=self.temporal_context,
+                temporal_stride=self.temporal_stride,
+                image_size=self.image_size
+            )
             dataset_gf = GazeFollowDataset(
                 root=self.root_gf, 
                 split="train", 
@@ -149,9 +150,9 @@ class CombinedSocialDataModule(pl.LightningDataModule):
                 num_people=self.num_people["train"]
             )
             
-#             self.train_dataset = ConcatDataset([dataset_childplay, dataset_vat, dataset_laeo, dataset_coatt, dataset_gf])
-            # self.train_dataset = ConcatDataset([dataset_childplay, dataset_vat, dataset_laeo, dataset_coatt])
-            self.train_dataset = ConcatDataset([dataset_vat, dataset_laeo, dataset_coatt])
+            # self.train_dataset = ConcatDataset([dataset_childplay, dataset_vat, dataset_laeo, dataset_coatt, dataset_gf])
+            self.train_dataset = ConcatDataset([dataset_childplay, dataset_vat, dataset_laeo, dataset_coatt])
+            # self.train_dataset = ConcatDataset([dataset_vat, dataset_laeo, dataset_coatt])
             # self.train_dataset = ConcatDataset([dataset_coatt])
             # self.train_dataset = ConcatDataset([dataset_laeo])
             # self.train_dataset = ConcatDataset([dataset_vat])
@@ -205,18 +206,18 @@ class CombinedSocialDataModule(pl.LightningDataModule):
                 temporal_stride=self.temporal_stride,
                 image_size=self.image_size
             )
-            # dataset_childplay = ChildPlayDataset_temporal(
-            #     cfg=self.cfg,
-            #     root=self.root_childplay, 
-            #     split="val", 
-            #     stride=6,
-            #     transform=val_transform, 
-            #     tr=(0.0, 0.0), 
-            #     num_people=self.num_people['val'],
-            #     temporal_context=self.temporal_context,
-            #     temporal_stride=self.temporal_stride,
-            #     image_size=self.image_size
-            # )
+            dataset_childplay = ChildPlayDataset_temporal(
+                cfg=self.cfg,
+                root=self.root_childplay, 
+                split="val", 
+                stride=6,
+                transform=val_transform, 
+                tr=(0.0, 0.0), 
+                num_people=self.num_people['val'],
+                temporal_context=self.temporal_context,
+                temporal_stride=self.temporal_stride,
+                image_size=self.image_size
+            )
             dataset_gf = GazeFollowDataset(
                 root=self.root_gf, 
                 split="val", 
@@ -224,9 +225,9 @@ class CombinedSocialDataModule(pl.LightningDataModule):
                 tr=(-0.1, 0.1), 
                 num_people=self.num_people["val"]
             )
-#             self.val_dataset = ConcatDataset([dataset_childplay, dataset_vat, dataset_laeo, dataset_coatt, dataset_gf])
-            # self.val_dataset = ConcatDataset([dataset_childplay, dataset_vat, dataset_laeo, dataset_coatt])
-            self.val_dataset = ConcatDataset([dataset_vat, dataset_laeo, dataset_coatt])
+            # self.val_dataset = ConcatDataset([dataset_childplay, dataset_vat, dataset_laeo, dataset_coatt, dataset_gf])
+            self.val_dataset = ConcatDataset([dataset_childplay, dataset_vat, dataset_laeo, dataset_coatt])
+            # self.val_dataset = ConcatDataset([dataset_vat, dataset_laeo, dataset_coatt])
             # self.val_dataset = ConcatDataset([dataset_coatt])
             # self.val_dataset = ConcatDataset([dataset_laeo])
             # self.val_dataset = ConcatDataset([dataset_vat])
@@ -245,6 +246,7 @@ class CombinedSocialDataModule(pl.LightningDataModule):
             )
                                                
             dataset_coatt = VideoCoAttDataset_temporal(
+                cfg=self.cfg,
                 root=self.root_coatt, 
                 split="val", 
                 stride=6,
@@ -277,17 +279,17 @@ class CombinedSocialDataModule(pl.LightningDataModule):
                 temporal_stride=self.temporal_stride,
                 image_size=self.image_size
             )
-            # dataset_childplay = ChildPlayDataset_temporal(
-            #     root=self.root_childplay, 
-            #     split="val", 
-            #     stride=6,
-            #     transform=val_transform, 
-            #     tr=(0.0, 0.0), 
-            #     num_people=self.num_people['val'],
-            #     temporal_context=self.temporal_context,
-            #     temporal_stride=self.temporal_stride,
-            #     image_size=self.image_size
-            # )
+            dataset_childplay = ChildPlayDataset_temporal(
+                root=self.root_childplay, 
+                split="val", 
+                stride=6,
+                transform=val_transform, 
+                tr=(0.0, 0.0), 
+                num_people=self.num_people['val'],
+                temporal_context=self.temporal_context,
+                temporal_stride=self.temporal_stride,
+                image_size=self.image_size
+            )
             dataset_gf = GazeFollowDataset(
                 root=self.root_gf, 
                 split="val", 
@@ -296,8 +298,8 @@ class CombinedSocialDataModule(pl.LightningDataModule):
                 num_people=self.num_people["val"]
             )
 #             self.val_dataset = ConcatDataset([dataset_childplay, dataset_vat, dataset_laeo, dataset_coatt, dataset_gf])
-            # self.val_dataset = ConcatDataset([dataset_childplay, dataset_vat, dataset_laeo, dataset_coatt])
-            self.val_dataset = ConcatDataset([dataset_vat, dataset_laeo, dataset_coatt])
+            self.val_dataset = ConcatDataset([dataset_childplay, dataset_vat, dataset_laeo, dataset_coatt])
+            # self.val_dataset = ConcatDataset([dataset_vat, dataset_laeo, dataset_coatt])
             # self.val_dataset = ConcatDataset([dataset_coatt])
             # self.val_dataset = ConcatDataset([dataset_laeo])
             # self.val_dataset = ConcatDataset([dataset_vat])
@@ -320,6 +322,7 @@ class CombinedSocialDataModule(pl.LightningDataModule):
                 ]
             )
             dataset_coatt = VideoCoAttDataset_temporal(
+                cfg=self.cfg,
                 root=self.root_coatt, 
                 split="test", 
                 stride=3,
@@ -332,6 +335,7 @@ class CombinedSocialDataModule(pl.LightningDataModule):
                 aspect = aspect
             )
             dataset_laeo = VideoLAEODataset_temporal(
+                cfg=self.cfg,
                 root=self.root_laeo, 
                 split="test", 
                 stride=3,
@@ -344,6 +348,7 @@ class CombinedSocialDataModule(pl.LightningDataModule):
                 aspect = aspect
             )
             dataset_vat = VideoAttentionTargetDataset_temporal(
+                cfg=self.cfg,
                 root=self.root_vat, 
                 split="test", 
                 stride=3,
@@ -356,6 +361,7 @@ class CombinedSocialDataModule(pl.LightningDataModule):
                 aspect = aspect
             )
             dataset_childplay = ChildPlayDataset_temporal(
+                cfg=self.cfg,
                 root=self.root_childplay, 
                 split="test", 
                 stride=3,
@@ -375,8 +381,8 @@ class CombinedSocialDataModule(pl.LightningDataModule):
                 num_people=self.num_people["test"]
             )
 #             self.test_dataset = ConcatDataset([dataset_childplay, dataset_vat, dataset_laeo, dataset_coatt, dataset_gf])
-            # self.test_dataset = ConcatDataset([dataset_childplay, dataset_vat, dataset_laeo, dataset_coatt])
-            self.test_dataset = ConcatDataset([dataset_vat, dataset_laeo, dataset_coatt])
+            self.test_dataset = ConcatDataset([dataset_childplay, dataset_vat, dataset_laeo, dataset_coatt])
+            # self.test_dataset = ConcatDataset([dataset_vat, dataset_laeo, dataset_coatt])
             # self.test_dataset = ConcatDataset([dataset_coatt])
             # self.test_dataset = ConcatDataset([dataset_laeo])
             # self.test_dataset = ConcatDataset([dataset_vat])
@@ -394,6 +400,7 @@ class CombinedSocialDataModule(pl.LightningDataModule):
                 ]
             )
             self.predict_dataset = VideoCoAttDataset_temporal(
+                cfg=self.cfg,
                 root=self.root, 
                 split="test",
                 stride=1,
@@ -401,7 +408,19 @@ class CombinedSocialDataModule(pl.LightningDataModule):
                 tr=(0.0, 0.0), 
                 num_people=self.num_people["test"]
             )
-
+        
+        # randomly sample a few examples for quick debugging
+        if True:
+            max_num = 200
+            if stage == "fit":
+                self.train_dataset = torch.utils.data.Subset(self.train_dataset, list(range(0, max_num)))
+                self.val_dataset = torch.utils.data.Subset(self.val_dataset, list(range(0, max_num)))
+            elif stage == "validate":
+                self.val_dataset = torch.utils.data.Subset(self.val_dataset, list(range(0, max_num)))
+            elif stage == "test":
+                self.test_dataset = torch.utils.data.Subset(self.test_dataset, list(range(0, max_num)))
+            elif stage == "predict":
+                self.predict_dataset = torch.utils.data.Subset(self.predict_dataset, list(range(0, max_num)))
 
     def train_dataloader(self):
         dataloader = DataLoader(
@@ -410,6 +429,8 @@ class CombinedSocialDataModule(pl.LightningDataModule):
             shuffle=True,
             num_workers=14,
             pin_memory=False,
+            # pin_memory=True,
+            # collate_fn=self.custom_collate_fn
         )
         return dataloader
 
@@ -420,6 +441,8 @@ class CombinedSocialDataModule(pl.LightningDataModule):
             shuffle=False,
             num_workers=6,
             pin_memory=False,
+            # pin_memory=True,
+            # collate_fn=self.custom_collate_fn
         )
         return dataloader
 
@@ -430,6 +453,8 @@ class CombinedSocialDataModule(pl.LightningDataModule):
             shuffle=True,
             num_workers=6,
             pin_memory=False,
+            # pin_memory=True,
+            # collate_fn=self.custom_collate_fn
         )
         return dataloader
 
@@ -440,5 +465,23 @@ class CombinedSocialDataModule(pl.LightningDataModule):
             shuffle=False,
             num_workers=8,
             pin_memory=False,
+            # pin_memory=True,
+            # collate_fn=self.custom_collate_fn
         )
         return dataloader
+    
+    # def custom_collate_fn(self, batch):
+    #     pop_keys = []
+    #     for item in batch[0].keys():
+    #         if type(item) != torch.Tensor and type(item) != np.ndarray:
+    #             pop_keys.append(item)
+
+    #     pop_items = {}
+    #     for key in pop_keys:
+    #         pop_items[key] = [item.pop(key) for item in batch]
+
+    #     batch = default_collate(batch)
+    #     for key in pop_keys:
+    #         batch[key] = pop_items[key]
+
+    #     return batch

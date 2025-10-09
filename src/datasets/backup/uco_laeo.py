@@ -383,7 +383,7 @@ class VideoLAEODataModule(pl.LightningDataModule):
             batch_size=self.batch_size[Stage.TRAIN],
             shuffle=True,
             num_workers=8,
-            pin_memory=True,
+            pin_memory=False,
         )
         return dataloader
 
@@ -393,7 +393,7 @@ class VideoLAEODataModule(pl.LightningDataModule):
             batch_size=self.batch_size[Stage.VAL],
             shuffle=False,
             num_workers=4,
-            pin_memory=True,
+            pin_memory=False,
         )
         return dataloader
 
@@ -403,7 +403,7 @@ class VideoLAEODataModule(pl.LightningDataModule):
             batch_size=self.batch_size[Stage.TEST],
             shuffle=False,
             num_workers=4,
-            pin_memory=True,
+            pin_memory=False,
         )
         return dataloader
 
@@ -413,6 +413,6 @@ class VideoLAEODataModule(pl.LightningDataModule):
             batch_size=self.batch_size[Stage.PREDICT],
             shuffle=False,
             num_workers=4,
-            pin_memory=True,
+            pin_memory=False,
         )
         return dataloader

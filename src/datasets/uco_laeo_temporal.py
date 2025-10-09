@@ -1,5 +1,6 @@
 # IMPORTS
 import os
+import sys
 from PIL import Image
 from glob import glob
 from typing import Tuple, Union
@@ -50,6 +51,7 @@ class VideoLAEODataset_temporal(Dataset):
         aspect=False
     ):
         super().__init__()
+        self.cfg = cfg
         self.root = root
         self.split=split
         self.stride = stride
@@ -205,6 +207,7 @@ class VideoLAEODataset_temporal(Dataset):
         if len(pids_ann.shape)==0:
             pids_ann = np.expand_dims(pids_ann, 0)
         
+        '''
         # keep up to num_people ids
         person_ids = np.concatenate([pids_ann, pids_det])
         num_heads = len(person_ids)
@@ -215,6 +218,17 @@ class VideoLAEODataset_temporal(Dataset):
                 num_keep = np.random.randint(2, min(num_heads, self.num_people)+1)
         else:
             batch_num_heads = num_heads
+        '''
+
+        person_ids = pids_ann
+        num_heads = len(person_ids)
+        num_keep = num_heads
+
+        if self.num_people!='all':
+            batch_num_heads = self.num_people
+        else:
+            batch_num_heads = num_heads
+
         person_ids = person_ids[:num_keep]
         person_ids_ann = person_ids[person_ids<self.pid_offset]
         person_ids_det = person_ids[person_ids>=self.pid_offset]        
@@ -224,7 +238,7 @@ class VideoLAEODataset_temporal(Dataset):
         if self.split=='train' and torch.rand(1) <= 0.5:
             self.horizontal_flip = RandomHorizontalFlip(p=1)
             
-# define temporal sample
+        # define temporal sample
         t_sample = {
                 "image": [],
                 "heads": [],
@@ -260,6 +274,8 @@ class VideoLAEODataset_temporal(Dataset):
                 t_sample['gaze_pts'].append(torch.zeros((batch_num_heads+1, 2), dtype=torch.float32)-1)
                 t_sample['gaze_vecs'].append(torch.zeros((batch_num_heads+1, 2), dtype=torch.float32))
                 t_sample['gaze_heatmaps'].append(torch.zeros((batch_num_heads+1, self.heatmap_size, self.heatmap_size), dtype=torch.float32))
+                t_sample['coatt_heatmaps'].append(torch.zeros((self.num_coatt, self.heatmap_size, self.heatmap_size), dtype=torch.float32))
+                t_sample['coatt_levels'].append(torch.zeros((self.num_coatt, batch_num_heads+1), dtype=torch.int))
                 t_sample['inout'].append(torch.zeros((batch_num_heads+1), dtype=torch.float32)-1)
                 t_sample['lah_ids'].append(torch.zeros((batch_num_heads+1), dtype=torch.long)-3)
                 t_sample['laeo_ids'].append(torch.zeros((batch_num_heads+1), dtype=torch.long))
@@ -317,17 +333,28 @@ class VideoLAEODataset_temporal(Dataset):
                 else:
                     pids_ann = torch.tensor([])
                 pids_det += self.pid_offset
-                
+
+                # Load annotations of coatt pairs and generate coatt ids
+                coatt_pairs = img_annotations['coatt_pairs'].values[0]
+                pairs = img_annotations['pairs'].values[0]
+                pids = img_annotations["person_ids"].values[0]
+                pid2idx = {pid: i for i, pid in enumerate(pids)}
+                pairs = [(pid2idx[i], pid2idx[j]) for i,j in pairs]
+
                 # Load annotations for selected person ids
-                head_bboxes = []; gaze_pts = []; speaking_scores = []; laeo_ids = []
+                head_bboxes = []; gaze_pts = []; speaking_scores = []; laeo_ids = []; inout = []
 
                 head_bbox_img = img_annotations['head_bboxes']
                 head_bbox_img = torch.from_numpy(head_bbox_img.values[0].astype(np.float32))
                 gaze_pt_img = img_annotations['gaze_points']
                 gaze_pt_img = torch.from_numpy(gaze_pt_img.values[0].astype(np.float32))
+                inout_img = img_annotations['inout']
+                inout_img = torch.from_numpy(inout_img.values[0].astype(np.float32))
 
-                for pi, pid in enumerate(person_ids_ann):
-                    pid_idx = np.where(pids_ann==pid)[0]
+                for pid in sorted(pids):
+                    pid_idx = np.where(pids==pid)[0]
+                # for pi, pid in enumerate(person_ids_ann):
+                    # pid_idx = np.where(pids_ann==pid)[0]
                     if len(pid_idx)==0:
                         head_bboxes.append(torch.zeros(4, dtype=torch.float32))
                         gaze_pts.append(torch.zeros(2, dtype=torch.float32)-1)
@@ -350,6 +377,8 @@ class VideoLAEODataset_temporal(Dataset):
                         # cid = img_ann['laeo_id'].values.item()
                         # laeo_ids.append(cid)
                         laeo_ids.append(-100)
+
+                        inout.append(inout_img[pid_idx].squeeze())
 
                         if len(det_head_bboxes)>0 and pid>=0 and pid<self.pid_offset//2:
                             speaking_scores.append(speaking_det[index_spk[pid_idx]])
@@ -377,9 +406,11 @@ class VideoLAEODataset_temporal(Dataset):
                 if len(head_bboxes)==0:
                     head_bboxes = torch.tensor([])
                     gaze_pts = torch.tensor([])
+                    inout = torch.tensor([])
                 else:
                     head_bboxes = torch.stack(head_bboxes)
                     gaze_pts = torch.stack(gaze_pts)
+                    inout = torch.stack(inout)
                     # jitter head bboxes
                     if self.split == "train":
                         head_bboxes = self.jitter_bbox(head_bboxes, img_w, img_h) 
@@ -389,24 +420,30 @@ class VideoLAEODataset_temporal(Dataset):
                 # Extract Heads
                 heads = []
                 for head_bbox in head_bboxes:
+                    # heads.append(image.crop(head_bbox.int().tolist()))
+                    head_xmin, head_ymin, head_xmax, head_ymax = head_bbox.tolist()
+                    head_xmin, head_xmax = map(lambda x: int(x * img_w), (head_xmin, head_xmax))
+                    head_ymin, head_ymax = map(lambda x: int(x * img_h), (head_ymin, head_ymax))
+                    head_bbox = torch.tensor([head_xmin, head_ymin, head_xmax, head_ymax], dtype=torch.float32)
                     heads.append(image.crop(head_bbox.int().tolist()))
+
                 num_valid_heads = len(heads)
                 num_missing_heads = max(self.num_people + 1 - num_valid_heads, 1) if self.num_people != "all" else 1    # pad at least one person
                 
-                if len(gaze_pts)>0:
+                # if len(gaze_pts)>0:
                     # Create (Normalized) Gaze Points
-                    gaze_pts[gaze_pts[:, 0] != -1.] /= torch.tensor([img_w, img_h])
+                    # gaze_pts[gaze_pts[:, 0] != -1.] /= torch.tensor([img_w, img_h])
                     # Normalize Head Bboxes
-                    head_bboxes /= torch.tensor([img_w, img_h, img_w, img_h], dtype=float)
+                    # head_bboxes /= torch.tensor([img_w, img_h, img_w, img_h], dtype=float)
                 
                 # get inout values
-                inout = torch.zeros(len(heads), dtype=torch.float32) - 1
-                for li, lid in enumerate(laeo_ids):
-                    if lid>0:
-                        corr_idx =  torch.where(laeo_ids[li+1:]==lid)[0]
-                        if len(corr_idx)>0:
-                            inout[li] = 1
-                            inout[li+1+corr_idx.item()] = 1
+                # inout = torch.zeros(len(heads), dtype=torch.float32) - 1
+                # for li, lid in enumerate(laeo_ids):
+                #     if lid>0:
+                #         corr_idx =  torch.where(laeo_ids[li+1:]==lid)[0]
+                #         if len(corr_idx)>0:
+                #             inout[li] = 1
+                #             inout[li+1+corr_idx.item()] = 1
 
                 # Build Sample
                 sample = {
@@ -500,9 +537,12 @@ class VideoLAEODataset_temporal(Dataset):
         return t_sample
 
     def __len__(self):
-        return len(self.paths)
+        # return len(self.paths)
     
-    
+        # self.use_ratio = 0.01
+        # self.use_ratio = 0.2
+        self.use_ratio = 1.0
+        return int(len(self.paths) * self.use_ratio)
 
 # ============================================================================================================ #
 #                                              VIDEOLAEO DATA MODULE                                          #
@@ -510,6 +550,7 @@ class VideoLAEODataset_temporal(Dataset):
 class VideoLAEODataModule(pl.LightningDataModule):
     def __init__(
         self,
+        cfg,
         root: str,
         batch_size: Union[int, dict] = 32,
         num_people: int = 5,
@@ -518,6 +559,7 @@ class VideoLAEODataModule(pl.LightningDataModule):
     ):  
         
         super().__init__()
+        self.cfg = cfg
         self.root = root
         self.num_people = num_people
         if isinstance(num_people, dict):
@@ -553,6 +595,7 @@ class VideoLAEODataModule(pl.LightningDataModule):
                 ]
             )
             self.train_dataset = VideoLAEODataset_temporal(
+                cfg=self.cfg,
                 root=self.root, 
                 split="train", 
                 stride=12,
@@ -574,6 +617,7 @@ class VideoLAEODataModule(pl.LightningDataModule):
                 ]
             )
             self.val_dataset = VideoLAEODataset_temporal(
+                cfg=self.cfg,
                 root=self.root, 
                 split="val", 
                 stride=6,
@@ -596,6 +640,7 @@ class VideoLAEODataModule(pl.LightningDataModule):
                 ]
             )
             self.val_dataset = VideoLAEODataset_temporal(
+                cfg=self.cfg,
                 root=self.root, 
                 split="val",
                 stride=6,
@@ -618,6 +663,7 @@ class VideoLAEODataModule(pl.LightningDataModule):
                 ]
             )
             self.test_dataset = VideoLAEODataset_temporal(
+                cfg=self.cfg,
                 root=self.root, 
                 split="test", 
                 stride=3,
@@ -641,6 +687,7 @@ class VideoLAEODataModule(pl.LightningDataModule):
                 ]
             )
             self.predict_dataset = VideoLAEODataset_temporal(
+                cfg=self.cfg,
                 root=self.root, 
                 split="test",
                 stride=1,
@@ -658,7 +705,7 @@ class VideoLAEODataModule(pl.LightningDataModule):
             batch_size=self.batch_size[Stage.TRAIN],
             shuffle=True,
             num_workers=8,
-            pin_memory=True,
+            pin_memory=False,
         )
         return dataloader
 
@@ -668,7 +715,7 @@ class VideoLAEODataModule(pl.LightningDataModule):
             batch_size=self.batch_size[Stage.VAL],
             shuffle=False,
             num_workers=4,
-            pin_memory=True,
+            pin_memory=False,
         )
         return dataloader
 
@@ -678,7 +725,7 @@ class VideoLAEODataModule(pl.LightningDataModule):
             batch_size=self.batch_size[Stage.TEST],
             shuffle=True,
             num_workers=4,
-            pin_memory=True,
+            pin_memory=False,
         )
         return dataloader
 
@@ -688,6 +735,6 @@ class VideoLAEODataModule(pl.LightningDataModule):
             batch_size=self.batch_size[Stage.PREDICT],
             shuffle=False,
             num_workers=4,
-            pin_memory=True,
+            pin_memory=False,
         )
         return dataloader

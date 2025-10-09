@@ -98,6 +98,7 @@ class Experiment(BaseExperiment):
             )
         elif self.cfg.experiment.dataset == "childplay":
             data = ChildPlayDataModule(
+                cfg = self.cfg,
                 root = self.cfg.data.childplay.root,
                 root_depth=self.cfg.data.childplay.root_depth,
                 root_focal=self.cfg.data.childplay.root_focal,
@@ -121,6 +122,7 @@ class Experiment(BaseExperiment):
             )
         elif self.cfg.experiment.dataset == "videoattentiontarget":
             data = VideoAttentionTargetDataModule(
+                cfg = self.cfg,
                 root = self.cfg.data.vat.root,
                 batch_size = {
                     Stage.TRAIN: self.cfg.train.batch_size,
@@ -150,13 +152,15 @@ class Experiment(BaseExperiment):
                 num_people = {
                     "train": self.cfg.data.num_people, 
                     "val": self.cfg.data.num_people, 
-                    "test": 'all'
+                    # "test": 'all'
+                    'test': self.cfg.data.num_people
                 },
                 temporal_context = self.cfg.data.temporal_context,
                 temporal_stride = self.cfg.data.temporal_stride,
             )
         elif self.cfg.experiment.dataset == "uco_laeo":
             data = VideoLAEODataModule(
+                cfg = self.cfg,
                 root = self.cfg.data.laeo.root,
                 batch_size = {
                     Stage.TRAIN: self.cfg.train.batch_size,
@@ -348,7 +352,7 @@ class Experiment(BaseExperiment):
         if ckpt_path:
             print(f"Loading checkpoint: {ckpt_path}")
             # Load the entire checkpoint file into memory
-            checkpoint = torch.load(ckpt_path, map_location="cpu")
+            checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
             checkpoint_state_dict = checkpoint['state_dict']
 
             # Get the state dict of your current model

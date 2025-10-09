@@ -208,7 +208,6 @@ class VideoAttentionTargetDataset_temporal(Dataset):
             paths = paths[index_keep]
 
         return annotations, paths
-
     
     def __getitem__(self, index):
         path = self.paths[index]
@@ -297,7 +296,8 @@ class VideoAttentionTargetDataset_temporal(Dataset):
             elif self.split=='train' and len(pids_det)>1:    # shuffle pids
                 rand_indices = torch.randperm(len(pids_det))
                 pids_det = pids_det[rand_indices]
-        
+
+        '''
         # keep up to num_people ids
         person_ids = np.concatenate([pids_ann, pids_det])
         num_heads = len(person_ids)
@@ -308,6 +308,17 @@ class VideoAttentionTargetDataset_temporal(Dataset):
                 num_keep = np.random.randint(2, min(num_heads, self.num_people)+1)
         else:
             batch_num_heads = num_heads
+        '''
+
+        person_ids = pids_ann
+        num_heads = len(person_ids)
+        num_keep = num_heads
+
+        if self.num_people!='all':
+            batch_num_heads = self.num_people
+        else:
+            batch_num_heads = num_heads
+
         person_ids = person_ids[:num_keep]
         person_ids_ann = person_ids[person_ids<self.pid_offset]
         person_ids_det = person_ids[person_ids>=self.pid_offset]
@@ -317,7 +328,7 @@ class VideoAttentionTargetDataset_temporal(Dataset):
         if self.split=='train' and torch.rand(1) <= 0.5:
             self.horizontal_flip = RandomHorizontalFlip(p=1)
 
-# define temporal sample
+        # define temporal sample
         t_sample = {
                 "image": [],
                 "heads": [],
@@ -353,6 +364,8 @@ class VideoAttentionTargetDataset_temporal(Dataset):
                 t_sample['gaze_pts'].append(torch.zeros((batch_num_heads+1, 2), dtype=torch.float32)-1)
                 t_sample['gaze_vecs'].append(torch.zeros((batch_num_heads+1, 2), dtype=torch.float32))
                 t_sample['gaze_heatmaps'].append(torch.zeros((batch_num_heads+1, self.heatmap_size, self.heatmap_size), dtype=torch.float32))
+                t_sample['coatt_heatmaps'].append(torch.zeros((self.num_coatt, self.heatmap_size, self.heatmap_size), dtype=torch.float32))
+                t_sample['coatt_levels'].append(torch.zeros((self.num_coatt, batch_num_heads+1), dtype=torch.int))
                 t_sample['inout'].append(torch.zeros((batch_num_heads+1), dtype=torch.float32)-1)
                 t_sample['lah_ids'].append(torch.zeros((batch_num_heads+1), dtype=torch.long)-3)
                 t_sample['laeo_ids'].append(torch.zeros((batch_num_heads+1), dtype=torch.long))
@@ -407,12 +420,47 @@ class VideoAttentionTargetDataset_temporal(Dataset):
                 inout_img = torch.from_numpy(inout_img.values[0].astype(np.float32))
 
                 head_bboxes = []; gaze_pts = []; inout = []; speaking_scores = []
-                for pi, pid in enumerate(person_ids_ann):
-                    pid_idx = np.where(pids_ann==pid)[0]
-                    if len(pid_idx)==0:
+                coatt_ids = []
+
+                # Load annotations of coatt pairs and generate coatt ids
+                coatt_pairs = img_annotations['coatt_pairs'].values[0]
+                pairs = img_annotations['pairs'].values[0]
+                pids = img_annotations["person_ids"].values[0]
+                pid2idx = {pid: i for i, pid in enumerate(pids)}
+                pairs = [(pid2idx[i], pid2idx[j]) for i,j in pairs]
+
+                # define the dict in which key: original person id, value: the order of the person id in this sample
+                # pids_ann_ori_set = set(pairs.flatten())
+                # pids_temp_to_stat_dict = {pid: pi for pi, pid in enumerate(sorted(pids_ann_ori_set))}
+
+                coatt_p_ids = {}
+                for pair_idx, coatt_pair in enumerate(coatt_pairs):
+                    if coatt_pair == 1:
+                        pair = pairs[pair_idx]
+                        pid_1, pid_2 = map(int, pair)
+                        # pid_1 = pids_temp_to_stat_dict[pid_1]
+                        # pid_2 = pids_temp_to_stat_dict[pid_2]
+                        
+                        find_coatt_id = False
+                        for coatt_id, p_ids in coatt_p_ids.items():
+                            if (pid_1 in p_ids) or (pid_2 in p_ids):
+                                coatt_p_ids[coatt_id].add(pid_1)
+                                coatt_p_ids[coatt_id].add(pid_2)
+                                find_coatt_id = True
+                        if not find_coatt_id:
+                            coatt_p_ids[len(coatt_p_ids)+1] = set([pid_1, pid_2])
+
+                for pid in sorted(pids):
+                    # pid_idx = np.where(pids==pid)[0]
+                    pid_idx = pid2idx[pid]
+                # for pi, pid in enumerate(person_ids_ann):
+                    # pid_idx = np.where(pids_ann==pid)[0]
+                    # if len(pid_idx)==0:
+                    if pid_idx == 0:
                         head_bboxes.append(torch.zeros(4, dtype=torch.float32))
                         gaze_pts.append(torch.zeros(2, dtype=torch.float32)-1)
                         inout.append(-1)
+                        coatt_ids.append(0)
                         speaking_scores.append(-1)
                     else:
                         # img_ann = img_annotations.iloc[pid_idx]
@@ -431,6 +479,16 @@ class VideoAttentionTargetDataset_temporal(Dataset):
                         gaze_pt = gaze_pt_img[pid_idx].squeeze()
                         gaze_pts.append(gaze_pt)
 
+                        # get coatt id
+                        find_coatt_id = False
+                        for coatt_id, p_ids in coatt_p_ids.items():
+                            if pid_idx in p_ids:
+                                coatt_ids.append(coatt_id)
+                                find_coatt_id = True
+                                break
+                        if not find_coatt_id:
+                            coatt_ids.append(0)
+
                         # io = img_ann['inout'].values.item()
                         io = inout_img[pid_idx].squeeze()
                         inout.append(io)
@@ -444,17 +502,19 @@ class VideoAttentionTargetDataset_temporal(Dataset):
                         else:
                             speaking_scores.append(-1)
 
+                coatt_ids = torch.tensor(coatt_ids, dtype=torch.long)
+
                 # Process detected head bboxes
-                for pid in person_ids_det:
-                    pid_idx = np.where(pids_det==pid)[0]
-                    gaze_pts.append(torch.zeros(2, dtype=torch.float32)-1)
-                    inout.append(-1)
-                    if len(pid_idx)==0:
-                        speaking_scores.append(-1)
-                        head_bboxes.append(torch.zeros(4, dtype=torch.float32))
-                    else:
-                        speaking_scores.append(speaking_det[pid_idx])
-                        head_bboxes.append(det_head_bboxes[pid_idx].squeeze())
+                # for pid in person_ids_det:
+                #     pid_idx = np.where(pids_det==pid)[0]
+                #     gaze_pts.append(torch.zeros(2, dtype=torch.float32)-1)
+                #     inout.append(-1)
+                #     if len(pid_idx)==0:
+                #         speaking_scores.append(-1)
+                #         head_bboxes.append(torch.zeros(4, dtype=torch.float32))
+                #     else:
+                #         speaking_scores.append(speaking_det[pid_idx])
+                #         head_bboxes.append(det_head_bboxes[pid_idx].squeeze())
 
                 # stack annotations
                 head_bboxes = torch.stack(head_bboxes)
@@ -472,7 +532,13 @@ class VideoAttentionTargetDataset_temporal(Dataset):
                 # Extract Heads
                 heads = []
                 for head_bbox in head_bboxes:
+                    # heads.append(image.crop(head_bbox.int().tolist()))
+                    head_xmin, head_ymin, head_xmax, head_ymax = head_bbox.tolist()
+                    head_xmin, head_xmax = map(lambda x: int(x * img_w), (head_xmin, head_xmax))
+                    head_ymin, head_ymax = map(lambda x: int(x * img_h), (head_ymin, head_ymax))
+                    head_bbox = torch.tensor([head_xmin, head_ymin, head_xmax, head_ymax], dtype=torch.float32)
                     heads.append(image.crop(head_bbox.int().tolist()))
+
                 num_valid_heads = len(heads)
 #                 num_missing_heads = max(self.num_people - num_valid_heads, 0) if self.num_people != "all" else 0    
                 num_missing_heads = max(self.num_people + 1 - num_valid_heads, 1) if self.num_people != "all" else 1    # pad at least one person
@@ -498,10 +564,10 @@ class VideoAttentionTargetDataset_temporal(Dataset):
                             lah_ids[i] = -1
 
                 # Create (Normalized) Gaze Points
-                gaze_pts[gaze_pts[:, 0] != -1.] /= torch.tensor([img_w, img_h])
+                # gaze_pts[gaze_pts[:, 0] != -1.] /= torch.tensor([img_w, img_h])
 
                 # Normalize Head Bboxes
-                head_bboxes /= torch.tensor([img_w, img_h, img_w, img_h], dtype=float)
+                # head_bboxes /= torch.tensor([img_w, img_h, img_w, img_h], dtype=float)
 
                 # Build Sample
                 sample = {
@@ -532,6 +598,7 @@ class VideoAttentionTargetDataset_temporal(Dataset):
                     heads = torch.cat([torch.zeros((num_missing_heads, 3, 224, 224), dtype=torch.float32), heads])
                     gaze_pts = torch.cat([torch.zeros((num_missing_heads, 2), dtype=torch.float32)-1, gaze_pts])
                     inout = torch.cat([torch.zeros((num_missing_heads, ), dtype=torch.float32)-1, inout])
+                    coatt_ids = torch.cat([torch.zeros((num_missing_heads, ), dtype=torch.long), coatt_ids])
                     lah_ids[lah_ids>=0] += num_missing_heads
                     lah_ids = torch.cat([torch.zeros((num_missing_heads, ), dtype=torch.long)-3, lah_ids])
                     speaking_scores = torch.cat([torch.zeros((num_missing_heads, ), dtype=torch.float32)-1, speaking_scores])
@@ -550,7 +617,7 @@ class VideoAttentionTargetDataset_temporal(Dataset):
 
                 is_child = torch.zeros(len(heads), dtype=torch.float) - 1
                 laeo_ids = lah2laeo(lah_ids)
-                coatt_ids = lah2coatt(lah_ids)
+                # coatt_ids = lah2coatt(lah_ids)
 
                 # generate gaze heatmaps
                 sample["gaze_heatmaps"] = generate_gaze_heatmap(gaze_pts, sigma=self.heatmap_sigma, size=self.heatmap_size)
@@ -596,12 +663,18 @@ class VideoAttentionTargetDataset_temporal(Dataset):
         return t_sample
 
     def __len__(self):
-        return len(self.paths)
+        # return len(self.paths)
         
+        # self.use_ratio = 0.03
+        # self.use_ratio = 0.1
+        self.use_ratio = 1.0
+        return int(len(self.paths) * self.use_ratio)
+
     
 class VideoAttentionTargetDataModule(pl.LightningDataModule):
     def __init__(
         self,
+        cfg,
         root: str,
         image_size: Tuple[int, int] = (224, 224),
         batch_size: Union[int, dict] = 32,
@@ -615,6 +688,7 @@ class VideoAttentionTargetDataModule(pl.LightningDataModule):
     ):  
         
         super().__init__()
+        self.cfg = cfg
         self.root = root
         self.heatmap_sigma = heatmap_sigma
         self.heatmap_size = heatmap_size
@@ -652,6 +726,7 @@ class VideoAttentionTargetDataModule(pl.LightningDataModule):
                 ]
             )
             self.train_dataset = VideoAttentionTargetDataset_temporal(
+                cfg=self.cfg,
                 root=self.root, 
                 split="train", 
                 stride=max(3, self.temporal_context*2*3),
@@ -675,6 +750,7 @@ class VideoAttentionTargetDataModule(pl.LightningDataModule):
                 ]
             )
             self.val_dataset = VideoAttentionTargetDataset_temporal(
+                cfg=self.cfg,
                 root=self.root, 
                 split="val", 
                 stride=max(3, self.temporal_context*2*3),
@@ -699,6 +775,7 @@ class VideoAttentionTargetDataModule(pl.LightningDataModule):
                 ]
             )
             self.val_dataset = VideoAttentionTargetDataset_temporal(
+                cfg=self.cfg,
                 root=self.root, 
                 split="val",
                 stride=max(3, self.temporal_context*2*3),
@@ -723,6 +800,7 @@ class VideoAttentionTargetDataModule(pl.LightningDataModule):
                 ]
             )
             self.test_dataset = VideoAttentionTargetDataset_temporal(
+                cfg=self.cfg,
                 root=self.root, 
                 split="test", 
                 stride=1,
@@ -748,6 +826,7 @@ class VideoAttentionTargetDataModule(pl.LightningDataModule):
                 ]
             )
             self.predict_dataset = VideoAttentionTargetDataset_temporal(
+                cfg=self.cfg,
                 root=self.root, 
                 split="test",
                 stride=1,
