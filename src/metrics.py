@@ -270,7 +270,8 @@ class GroupIoU():
         return hm_dist, hm_dist_masked
 
 class GroupAP():
-    def __init__(self, iou_thresh=0.5):
+    # def __init__(self, iou_thresh=0.5):
+    def __init__(self, iou_thresh=0.75):
         self.iou_thresh = iou_thresh
 
     def calculateAveragePrecision(self, rec, prec):
@@ -292,10 +293,12 @@ class GroupAP():
 
         return [ap, mpre[0:len(mpre) - 1], mrec[0:len(mpre) - 1], ii]
 
-    def compute(self, grouping_pred: torch.Tensor, grouping_gt: torch.Tensor):
+    def compute(self, grouping_pred: torch.Tensor, grouping_gt: torch.Tensor, hm_pred: torch.Tensor, hm_gt: torch.Tensor):
         TP = []
         FP = []
+        dists = []
         npos = 0
+        npos_dist = 0
         for b in range(grouping_gt.shape[0]):
             grouping_gt_b = grouping_gt[b]
             grouping_gt_b = grouping_gt_b[grouping_gt_b.sum(dim=-1)>1]  # remove empty groups
@@ -325,6 +328,15 @@ class GroupAP():
                     if not det_gt[ious.argmax()]:
                         TP.append(1)
                         FP.append(0)
+
+                        hm_pred_target = hm_pred[b, pred_idx]
+                        hm_pred_target_pnt = spatial_argmax2d(hm_pred_target, normalize=True)
+                        hm_gt_target = hm_gt[b, ious.argmax()]
+                        hm_gt_target_pnt = spatial_argmax2d(hm_gt_target, normalize=True)
+                        hm_dist = (hm_gt_target_pnt - hm_pred_target_pnt).pow(2).sum(-1).sqrt()  # (b, token_size)
+                        dists.append(hm_dist.item())
+                        npos_dist += 1
+
                         det_gt[ious.argmax()] = True
                     else:
                         FP.append(1)
@@ -341,4 +353,17 @@ class GroupAP():
         prec = np.divide(acc_TP, (acc_FP + acc_TP))
         [ap, mpre, mrec, ii] = self.calculateAveragePrecision(rec, prec)
 
-        return ap, npos
+        ret_metrics = {
+            'ap': ap,
+            'prec': prec,
+            'rec': rec,
+            'npos': npos,
+            'npos_dist': npos_dist,
+            'TP': TP,
+            'FP': FP,
+            'acc_TP': acc_TP,
+            'acc_FP': acc_FP,
+            'dist': np.mean(dists)
+        }
+
+        return ret_metrics

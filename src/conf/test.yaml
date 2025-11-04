@@ -20,21 +20,22 @@ experiment:
     # dataset: videoattentiontarget # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
     # dataset: uco_laeo # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
     path: ${hydra:runtime.cwd} # to retrieve logs and checkpoints
-    cuda: 2
+    cuda: 1
 
 # ------------------------------------------------------------------------------------------------------------------- #
 
 data:
     num_samples: 36000    # GazeFollow: 108955, VAT: 9000, childplay: 15000, combined_social: 36000, laeo: 2900
-    num_people: 39 # /!\ int or -1 for all
+    # num_people: 39 # /!\ int or -1 for all
+    num_people: all # /!\ int or -1 for all
     num_coatt: 40
     return_depth: False # /!\
     return_head_mask: False # /!\
     image_size: 224 # /!\ used only for scene tokenizer
     heatmap_size: 64
     heatmap_sigma: 3
-    temporal_context: 2    # 2; temporal context window # frames
-    # temporal_context: 0    # 2; temporal context window # frames
+    # temporal_context: 2    # 2; temporal context window # frames
+    temporal_context: 0    # 2; temporal context window # frames
     temporal_stride: 3    # 3; temporal stride for model input
     vlm_dim: 24    # ava: 24, swig:406, hico:117 dimension of VLM context vector
     gf:
@@ -80,6 +81,14 @@ model:
         # multivit_weights: /home/nakatani/joint_attention_project/mtgs/src/weights/multimae-b_98_rgb+-depth-semseg_1600e_multivit-afff3f8c.pth
         # multivit_weights: /home/nakatani/joint_attention_project/mtgs/src/weights/multimae-b_98_rgb+-depth-semseg_1600e_timm-bafa5499.pth
         multivit_weights: False
+    interact:
+        # person_token_type: normal # {normal, w_gaze_hm, w_gaze_vec}
+        person_token_type: normal
+    # coatt_hm_type: hm # {coef, hm, coef_iter}
+    # coatt_hm_type: coef # {coef, hm, coef_iter}
+    coatt_hm_type: coef_iter # {coef, hm, coef_iter}
+    coatt_coef_iter_cnt: 1
+    # coatt_coef_iter_cnt: 4
     coatt_coatt_layer: self
     coatt_person_layer: sep
     weights: False # {False, path to weights}
@@ -136,20 +145,20 @@ val:
 # ------------------------------------------------------------------------------------------------------------------- #
 
 test:
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-01/20-46-38_COA_True_SOC_False/best.ckpt"
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-01/19-21-15_COA_True_SOC_True/best.ckpt"
+    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-16/14-05-08_COA_True_SOC_False/best.ckpt"
 
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-02/09-40-42_COA_True_SOC_False/best.ckpt"
+    # [iter=1]
+    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-24/11-42-44_COA_True_SOC_False/best.ckpt"
+    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-24/11-42-44_COA_True_SOC_False/last.ckpt"
+    # [iter=4]
+    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-24/11-45-22_COA_True_SOC_False/best.ckpt"
+    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-24/11-45-22_COA_True_SOC_False/last.ckpt"
 
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-02/09-40-42_COA_True_SOC_False/last.ckpt"
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-02/09-40-26_COA_True_SOC_True/last.ckpt"
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-02/09-40-32_COA_False_SOC_True/last.ckpt"
+    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-26/10-24-24_COA_False_SOC_True/best.ckpt"
+    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-26/10-24-24_COA_False_SOC_True/last.ckpt"
 
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-03/09-21-05_COA_True_SOC_False/best.ckpt"
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-03/09-43-29_COA_False_SOC_True/best.ckpt"
-
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-08/12-53-07_COA_False_SOC_True/best.ckpt"
-    checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-08/13-39-50_COA_True_SOC_False/best.ckpt"
+    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-26/10-24-42_COA_True_SOC_True/best.ckpt"
+    checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-26/10-24-42_COA_True_SOC_True/last.ckpt"
 
     batch_size: 1 # /!\
     device: ${train.device}

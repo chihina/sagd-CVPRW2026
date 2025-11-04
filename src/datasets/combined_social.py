@@ -410,8 +410,9 @@ class CombinedSocialDataModule(pl.LightningDataModule):
             )
         
         # randomly sample a few examples for quick debugging
-        if True:
-            max_num = 200
+        if False:
+        # if True:
+            max_num = 3000
             if stage == "fit":
                 self.train_dataset = torch.utils.data.Subset(self.train_dataset, list(range(0, max_num)))
                 self.val_dataset = torch.utils.data.Subset(self.val_dataset, list(range(0, max_num)))

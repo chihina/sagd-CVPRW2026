@@ -200,7 +200,7 @@ def visualize_coatt(frame, batch):
     elif batch['dataset'][0]=='childplay':
         coatt_level_thresh = 0.2
     elif batch['dataset'][0]=='coatt':
-        coatt_level_thresh = 0.3
+        coatt_level_thresh = 0.7
     else:
         coatt_level_thresh = 0.2
 
@@ -209,7 +209,6 @@ def visualize_coatt(frame, batch):
     for token_idx in range(coatt_level.shape[0]):
         coatt_level_pred = coatt_level[token_idx, :]
         coatt_hm_pred = coatt_hm[token_idx, :, :]
-        # print(f'CoAtt Token {token_idx}', coatt_hm_pred)
         coatt_level_exist = torch.sum(coatt_level_pred > coatt_level_thresh) > 1
         # print(f'Token {token_idx} exist:', coatt_level_pred, coatt_level_exist)
         if coatt_level_exist:
@@ -233,11 +232,13 @@ def visualize_coatt(frame, batch):
                 color_text = (255, 255, 255)
                 frame = cv2.putText(frame, f'{coatt_level_pred_person:.2f}', fin, font, fontScale, color_text, thickness, cv2.LINE_AA)
 
-            # generate co-attention heatmap
+            '''
             coatt_mask = coatt_level_pred > coatt_level_thresh
             coatt_hm_pred = coatt_hm_pred * coatt_mask[:, None, None]
             coatt_hm_pred = torch.mean(coatt_hm_pred, 0)
+            '''
 
+            coatt_hm_pred = coatt_hm_pred.float()
             coatt_hm_pred = (coatt_hm_pred - torch.min(coatt_hm_pred.view(-1))) / (torch.max(coatt_hm_pred.view(-1)) - torch.min(coatt_hm_pred.view(-1)))
             coatt_hm_pred = cv2.resize(coatt_hm_pred.cpu().numpy(), (w, h), interpolation=cv2.INTER_LINEAR)
             coatt_hm_pred = (coatt_hm_pred * 255).astype(np.uint8)
@@ -425,17 +426,14 @@ def compute(results, clip_name):
 if __name__=='__main__':
 
     checkpoints_dir = "checkpoints"
-    # model_dir = "combined_social/2025-10-02/09-40-42_COA_True_SOC_False"
-    # model_dir = "combined_social/2025-10-02/09-40-26_COA_True_SOC_True"
-    # model_dir = "combined_social/2025-10-02/09-40-32_COA_False_SOC_True"
-    # model_dir = "combined_social/2025-10-03/09-21-05_COA_True_SOC_False"
 
-    # model_dir = "combined_social/2025-10-08/12-53-07_COA_False_SOC_True"
-    model_dir = "combined_social/2025-10-08/13-39-50_COA_True_SOC_False"
+    # model_dir = "combined_social/2025-10-22/13-58-05_COA_True_SOC_False"
+    # model_dir = "combined_social/2025-10-16/14-05-08_COA_True_SOC_False"
+    model_dir = "combined_social/2025-10-26/10-24-42_COA_True_SOC_True"
 
-    dataset_name = 'videocoatt'
+    # dataset_name = 'videocoatt'
     # dataset_name = 'childplay'
-    # dataset_name = 'videoattentiontarget'
+    dataset_name = 'videoattentiontarget'
     # dataset_name = 'uco_laeo'
     results_name = 'test-predictions.pickle'
     results_path = os.path.join(checkpoints_dir, model_dir, dataset_name, results_name)

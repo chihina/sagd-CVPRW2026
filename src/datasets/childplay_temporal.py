@@ -272,63 +272,17 @@ class ChildPlayDataset_temporal(Dataset):
         
         # get frame nums around current frame
         frame_nbs = np.arange(curr_frame_nb-(self.temporal_stride*self.temporal_context), curr_frame_nb+(self.temporal_stride*self.temporal_context)+1, self.temporal_stride)
-        
-        # get annotated person ids
-        # pids_ann = img_annotations['person_id'].values
-        # head_bboxes = img_annotations[["head_xmin", "head_ymin", "head_xmax", "head_ymax"]]
-        # head_bboxes = torch.from_numpy(head_bboxes.values.astype(np.float32))
-
         head_bboxes = img_annotations['head_bboxes']
         head_bboxes = torch.from_numpy(head_bboxes.values[0].astype(np.float32))
+
         pids_ann = np.arange(len(head_bboxes))
 
-        if self.split=='train':    # shuffle pids
+        # if self.split=='train':    # shuffle pids
+        if self.split in ['train', 'val']:    # shuffle pids
             rand_indices = torch.randperm(head_bboxes.size(0))
             pids_ann = pids_ann[rand_indices]
         if len(pids_ann.shape)==0:
             pids_ann = np.expand_dims(pids_ann, 0)
-
-        # get detected person ids
-        pids_det = torch.tensor([])
-        # if path in self.df_speaking.groups.keys():
-            # df_speaking_frame = self.df_speaking.get_group(path)
-            # det_head_bboxes = np.stack([df_speaking_frame['xmin'].values*img_w, df_speaking_frame['ymin'].values*img_h, df_speaking_frame['xmax'].values*img_w, df_speaking_frame['ymax'].values*img_h], axis=1)
-            # det_head_bboxes = torch.from_numpy(det_head_bboxes.astype(np.float32))
-            # pids_det = df_speaking_frame['id'].values + self.pid_offset    # add offset to detected people ids
-        
-        # keep non-overlapping detected heads
-        index_spk = torch.zeros(len(pids_ann)); index_spk_keep = torch.zeros(len(pids_ann))
-        if len(pids_det) > 0:
-            # merge annotated head bboxes
-            ious = box_iou(det_head_bboxes, head_bboxes)
-            ious_spk, index_spk = torch.max(ious, axis=0)
-            index_spk = pids_det[index_spk]
-            index_spk_keep = ious_spk >= 0.5
-            if len(index_spk.shape)==0:
-                index_spk = torch.tensor([index_spk])
-                index_spk_keep = torch.tensor([index_spk_keep])
-            
-            ious_bbox, _ = torch.max(ious, axis=1)
-            index_bbox_keep = ious_bbox < 0.3
-            pids_det = pids_det[index_bbox_keep.numpy()]
-            if len(pids_det.shape)==0:
-                pids_det = np.expand_dims(pids_det, 0)
-            elif self.split=='train' and len(pids_det)>1:    # shuffle pids
-                rand_indices = torch.randperm(len(pids_det))
-                pids_det = pids_det[rand_indices]
-        
-        '''
-        # keep up to num_people ids
-        person_ids = np.concatenate([pids_ann, pids_det])
-        num_heads = len(person_ids)
-        num_keep = num_heads
-        if self.num_people!='all':
-            batch_num_heads = self.num_people
-            if num_heads>1:
-                num_keep = np.random.randint(2, min(num_heads, self.num_people)+1)
-        else:
-            batch_num_heads = num_heads
-        '''
 
         person_ids = pids_ann
         num_heads = len(person_ids)
@@ -336,13 +290,20 @@ class ChildPlayDataset_temporal(Dataset):
 
         if self.num_people!='all':
             batch_num_heads = self.num_people
+            if num_heads>1:
+                # num_keep = np.random.randint(2, min(num_heads, self.num_people)+1)
+                num_keep = min(num_heads, self.num_people)
         else:
             batch_num_heads = num_heads
         
+        '''
+        if self.num_people!='all':
+            batch_num_heads = self.num_people
+        else:
+            batch_num_heads = num_heads
+        '''
 
         person_ids = person_ids[:num_keep]
-        person_ids_ann = person_ids[person_ids<self.pid_offset]
-        person_ids_det = person_ids[person_ids>=self.pid_offset]
         
         # randomly choose to apply the horizontal flip augmentation
         self.horizontal_flip = False
@@ -435,21 +396,10 @@ class ChildPlayDataset_temporal(Dataset):
                     depth = TF.resize(depth, (img_h, img_w), antialias=True)
                     # Compute point cloud
                     pcd = get_ptcloud(depth.squeeze(0), focal_length).permute(2,0,1)
-                
-                # Get detected head bboxes
-                # if path in self.df_speaking.groups.keys():
-                #     df_speaking_frame = self.df_speaking.get_group(path)
-                #     det_head_bboxes = np.stack([df_speaking_frame['xmin'].values*img_w, df_speaking_frame['ymin'].values*img_h, df_speaking_frame['xmax'].values*img_w, df_speaking_frame['ymax'].values*img_h], axis=1)
-                #     det_head_bboxes = torch.from_numpy(det_head_bboxes.astype(np.float32))
-                #     pids_det = torch.from_numpy(df_speaking_frame['id'].values) + self.pid_offset
-                #     speaking_det = torch.from_numpy(df_speaking_frame['score'].values.astype(np.float32))
-                # else:
-                #     det_head_bboxes = []
 
                 det_head_bboxes = []
 
                 # Load annotations for selected person ids
-                # img_annotations = self.annotations.get_group((clip, frame_nb))
                 img_annotations = self.annotations.get_group(path)
 
                 # pids_ann = img_annotations["person_id"].values
@@ -472,19 +422,25 @@ class ChildPlayDataset_temporal(Dataset):
                 pairs = img_annotations['pairs'].values[0]
                 pids = img_annotations["person_ids"].values[0]
                 pid2idx = {pid: i for i, pid in enumerate(pids)}
+                idx2pid = {i: pid for i, pid in enumerate(pids)}
                 pairs = [(pid2idx[i], pid2idx[j]) for i,j in pairs]
 
-                # define the dict in which key: original person id, value: the order of the person id in this sample
-                # pids_ann_ori_set = set(pairs.flatten())
-                # pids_temp_to_stat_dict = {pid: pi for pi, pid in enumerate(sorted(pids_ann_ori_set))}
+                # during training, select fixed number of people for faster training
+                # if self.split=='train' and self.num_people != 'all':
+                if self.split in ['train', 'val'] and self.num_people != 'all':
+                    pids_pad = pids[0]
+                    pids_wo_pad = pids[1:]
+                    pids_wo_pad = np.random.permutation(pids_wo_pad)[:num_keep-1]
+                    pids = np.concatenate(([pids_pad], pids_wo_pad))
 
                 coatt_p_ids = {}
                 for pair_idx, coatt_pair in enumerate(coatt_pairs):
                     if coatt_pair == 1:
                         pair = pairs[pair_idx]
                         pid_1, pid_2 = map(int, pair)
-                        # pid_1 = pids_temp_to_stat_dict[pid_1]
-                        # pid_2 = pids_temp_to_stat_dict[pid_2]
+
+                        if not (idx2pid[pid_1] in pids and idx2pid[pid_2] in pids):
+                            continue
                         
                         find_coatt_id = False
                         for coatt_id, p_ids in coatt_p_ids.items():
@@ -496,11 +452,7 @@ class ChildPlayDataset_temporal(Dataset):
                             coatt_p_ids[len(coatt_p_ids)+1] = set([pid_1, pid_2])
 
                 for pid in sorted(pids):
-                    # pid_idx = np.where(pids==pid)[0]
                     pid_idx = pid2idx[pid]
-                # for pi, pid in enumerate(person_ids_ann):
-                    # pid_idx = np.where(pids_ann==pid)[0]
-                    # if len(pid_idx)==0:
                     if pid_idx == 0:
                         head_bboxes.append(torch.zeros(4, dtype=torch.float32))
                         gaze_pts.append(torch.zeros(2, dtype=torch.float32)-1)
@@ -510,29 +462,13 @@ class ChildPlayDataset_temporal(Dataset):
                         speaking_scores.append(-1)
                         is_child.append(-1)
                     else:
-                        # if len(pid_idx)>1:
-                            # print(pids, pid_idx)
-                            # print('error: more than one same pid!')
-                            # pid_idx = pid_idx[:1]
-
-                        # img_ann = img_annotations.iloc[pid_idx]
-                        # head_bbox = img_ann[["head_xmin", "head_ymin", "head_xmax", "head_ymax"]]
-                        # head_bbox = torch.from_numpy(head_bbox.values.astype(np.float32)).squeeze() 
                         head_bbox = head_bbox_img[pid_idx].squeeze()
                         head_bboxes.append(head_bbox)
 
-                        # gaze_pt = img_ann[["gaze_x", "gaze_y"]]
-                        # gaze_pt = torch.from_numpy(gaze_pt.values.astype(np.float32)).squeeze() 
                         gaze_pt = gaze_pt_img[pid_idx].squeeze()
                         gaze_pts.append(gaze_pt)
                         
-                        # is_child.append(img_ann['is_child'].values[0])
                         is_child.append(-1)
-                        # io = -1
-                        # if img_ann['gaze_class'].values=='inside_visible':
-                            # io = 1
-                        # elif img_ann['gaze_class'].values=='outside_frame':
-                            # io = 0
                         io = inout_img[pid_idx].squeeze().item()
                         inout.append(io)
                         
@@ -552,30 +488,7 @@ class ChildPlayDataset_temporal(Dataset):
                         # elif img_ann['speaking_status'].values=='not-speaking':
                             # si = 0
                         gt_speaking.append(si)  
-                        if len(det_head_bboxes)>0:
-                            pid_idx = torch.where(pids_det==index_spk[pi])[0]
-                            if len(pid_idx)>0 and index_spk_keep[pi]:
-                                speaking_scores.append(speaking_det[pid_idx])
-                            else:
-                                speaking_scores.append(-1)
-                        else:
-                            speaking_scores.append(-1)
-
-                # Process detected head bboxes
-                # if len(det_head_bboxes) > 0:
-                #     # merge annotated head bboxes
-                #     for pid in person_ids_det:
-                #         pid_idx = np.where(pids_det==pid)[0]
-                #         gaze_pts.append(torch.zeros(2, dtype=torch.float32)-1)
-                #         inout.append(-1)
-                #         gt_speaking.append(-1)
-                #         is_child.append(-1)
-                #         if len(pid_idx)==0:
-                #             speaking_scores.append(-1)
-                #             head_bboxes.append(torch.zeros(4, dtype=torch.float32))
-                #         else:
-                #             speaking_scores.append(speaking_det[pid_idx])
-                #             head_bboxes.append(det_head_bboxes[pid_idx].squeeze())
+                        speaking_scores.append(-1)
 
                 # stack annotations
                 coatt_ids = torch.tensor(coatt_ids, dtype=torch.long)
@@ -636,8 +549,6 @@ class ChildPlayDataset_temporal(Dataset):
 
                 # Extract Heads
                 heads = []
-                # for head_bbox in head_bboxes:
-                    # heads.append(image.crop(head_bbox.int().tolist()))
                 for head_bbox in head_bboxes:
                     # add to use normalized head bboxes nk
                     head_xmin, head_ymin, head_xmax, head_ymax = head_bbox.tolist()

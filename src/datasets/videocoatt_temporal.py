@@ -166,84 +166,39 @@ class VideoCoAttDataset_temporal(Dataset):
         frame_nbs = np.arange(curr_frame_nb-(self.temporal_stride*self.temporal_context), curr_frame_nb+(self.temporal_stride*self.temporal_context)+1, self.temporal_stride)
         
         # get annotated person bboxes
-        # head_bboxes = img_annotations[["head_xmin", "head_ymin", "head_xmax", "head_ymax"]]
-        # head_bboxes = torch.from_numpy(head_bboxes.values.astype(np.float32))
         head_bboxes = img_annotations['head_bboxes']
         head_bboxes = torch.from_numpy(head_bboxes.values[0].astype(np.float32))
-        
-        '''
-        # get detected person ids
-        pids_det = torch.tensor([])
-        if path in self.df_speaking.groups.keys():
-            df_speaking_frame = self.df_speaking.get_group(path)
-            det_head_bboxes = np.stack([df_speaking_frame['xmin'].values*img_w, df_speaking_frame['ymin'].values*img_h, df_speaking_frame['xmax'].values*img_w, df_speaking_frame['ymax'].values*img_h], axis=1)
-            det_head_bboxes = torch.from_numpy(det_head_bboxes.astype(np.float32))
-            pids_det = df_speaking_frame['id'].values     # add offset to detected people ids
-        else:
-            det_head_bboxes = head_bboxes.clone()
-            pids_det = np.arange(len(det_head_bboxes)) + self.pid_offset//2   # assign random person ids if no detections (for test/val)
-        
-        # process detected head bboxes
-        pids_ann = torch.tensor([])
-        if len(pids_det) > 0:
-            # merge annotated head bboxes
-            ious = box_iou(det_head_bboxes, head_bboxes)
-            ious_spk, index_spk = torch.max(ious, axis=0)
-            pids_ann = pids_det[index_spk]    # for detected and matched heads
-            if len(pids_ann.shape)==0:
-                pids_ann = np.expand_dims(pids_ann, 0)
-            if (ious_spk<0.5).sum()>0:
-                pids_ann[np.array(ious_spk<0.5)] = np.arange((ious_spk<0.5).sum()) + self.pid_offset//2
-            
-            # keep non-overlapping detected heads
-            ious_bbox, _ = torch.max(ious, axis=1)
-            index_bbox_keep = ious_bbox < 0.3
-            pids_det = pids_det[index_bbox_keep.numpy()] + self.pid_offset
-            if len(pids_det.shape)==0:
-                pids_det = np.expand_dims(pids_det, 0)
-            elif self.split=='train' and len(pids_det)>1:    # shuffle pids
-                rand_indices = torch.randperm(len(pids_det))
-                pids_det = pids_det[rand_indices]
-        '''
-
         pids_ann = np.arange(len(head_bboxes))
 
         # shuffle pids
-        if self.split=='train':    
+        # if self.split=='train':
+        if self.split in ['train', 'val']:
             rand_indices = torch.randperm(len(pids_ann))
             pids_ann = pids_ann[rand_indices]
         if len(pids_ann.shape)==0:
             pids_ann = np.expand_dims(pids_ann, 0)
         
-        # keep up to num_people ids
-        '''
-        person_ids = np.concatenate([pids_ann, pids_det])
-        '''
-
         person_ids = pids_ann
         num_heads = len(person_ids)
         num_keep = num_heads
 
-        '''
         if self.num_people!='all':
             batch_num_heads = self.num_people
             if num_heads>1:
-                num_keep = np.random.randint(2, min(num_heads, self.num_people)+1)
+                # num_keep = np.random.randint(2, min(num_heads, self.num_people)+1)
+                num_keep = min(num_heads, self.num_people)
         else:
             batch_num_heads = num_heads
-        '''
         
+        '''
         if self.num_people!='all':
             batch_num_heads = self.num_people
         else:
             batch_num_heads = num_heads
+        '''
         
         person_ids = person_ids[:num_keep]
-        '''
-        person_ids_ann = person_ids[person_ids<self.pid_offset]
-        person_ids_det = person_ids[person_ids>=self.pid_offset]
-        '''
-        
+
         # randomly choose to apply the horizontal flip augmentation
         self.horizontal_flip = False
         if self.split=='train' and torch.rand(1) <= 0.5:
@@ -310,42 +265,7 @@ class VideoCoAttDataset_temporal(Dataset):
                 
                 # get annotated person bboxes
                 img_annotations = self.annotations.get_group(path)
-                # head_bboxes = []
-                # if path in self.annotations.groups.keys():
-                    # img_annotations = self.annotations.get_group(path)
-                    # head_bboxes = img_annotations['head_bboxes']
-                    # head_bboxes = torch.from_numpy(head_bboxes.values[0].astype(np.float32))
-                
-                '''
-                # Get detected head bboxes
-                if path in self.df_speaking.groups.keys():
-                    df_speaking_frame = self.df_speaking.get_group(path)
-                    det_head_bboxes = np.stack([df_speaking_frame['xmin'].values*img_w, df_speaking_frame['ymin'].values*img_h, df_speaking_frame['xmax'].values*img_w, df_speaking_frame['ymax'].values*img_h], axis=1)
-                    det_head_bboxes = torch.from_numpy(det_head_bboxes.astype(np.float32))
-                    pids_det = torch.from_numpy(df_speaking_frame['id'].values)
-                    speaking_det = torch.from_numpy(df_speaking_frame['score'].values.astype(np.float32))
-                elif frame_nb==curr_frame_nb:
-                    det_head_bboxes = head_bboxes.clone()
-                    pids_det = torch.arange(len(det_head_bboxes)) + self.pid_offset//2   # assign random person ids if no detections (for test/val)
-                    speaking_det = torch.zeros(len(det_head_bboxes), dtype=torch.float) - 1
-                else:
-                    pids_det = torch.tensor([])
-                    det_head_bboxes = []
 
-                # process detected head bboxes
-                if len(pids_det) > 0 and len(head_bboxes)>0:
-                    # merge annotated head bboxes
-                    ious = box_iou(det_head_bboxes, head_bboxes)
-                    ious_spk, index_spk = torch.max(ious, axis=0)
-                    pids_ann = pids_det[index_spk]    # for detected and matched heads
-                    pids_ann[ious_spk<0.5] = -self.pid_offset    # ignore non-matched heads
-                    if frame_nb==curr_frame_nb:   # keep non-matched heads for central frame
-                        pids_ann[ious_spk<0.5] = torch.arange((ious_spk<0.5).sum()) + self.pid_offset//2
-                else:
-                    pids_ann = torch.tensor([])
-                pids_det += self.pid_offset
-                '''
-                
                 # Load annotations for selected person ids
                 head_bboxes = []; gaze_pts = []; speaking_scores = []
                 coatt_ids = []
@@ -355,19 +275,26 @@ class VideoCoAttDataset_temporal(Dataset):
                 pairs = img_annotations['pairs'].values[0]
                 pids = img_annotations["person_ids"].values[0]
                 pid2idx = {pid: i for i, pid in enumerate(pids)}
+                idx2pid = {i: pid for i, pid in enumerate(pids)}
                 pairs = [(pid2idx[i], pid2idx[j]) for i,j in pairs]
 
-                # define the dict in which key: original person id, value: the order of the person id in this sample
-                # pids_ann_ori_set = set(pairs.flatten())
-                # pids_temp_to_stat_dict = {pid: pi for pi, pid in enumerate(sorted(pids_ann_ori_set))}
+                # during training, select fixed number of people for faster training
+                # if self.split=='train' and self.num_people != 'all':
+                if self.split in ['train', 'val'] and self.num_people != 'all':
+                    pids_pad = pids[0]
+                    pids_wo_pad = pids[1:]
+                    pids_wo_pad = np.random.permutation(pids_wo_pad)[:num_keep-1]
+                    pids = np.concatenate(([pids_pad], pids_wo_pad))
 
+                # search coatt ids
                 coatt_p_ids = {}
                 for pair_idx, coatt_pair in enumerate(coatt_pairs):
                     if coatt_pair == 1:
                         pair = pairs[pair_idx]
                         pid_1, pid_2 = map(int, pair)
-                        # pid_1 = pids_temp_to_stat_dict[pid_1]
-                        # pid_2 = pids_temp_to_stat_dict[pid_2]
+
+                        if not (idx2pid[pid_1] in pids and idx2pid[pid_2] in pids):
+                            continue
 
                         find_coatt_id = False
                         for coatt_id, p_ids in coatt_p_ids.items():
@@ -384,23 +311,13 @@ class VideoCoAttDataset_temporal(Dataset):
                 gaze_pt_img = torch.from_numpy(gaze_pt_img.values[0].astype(np.float32))
 
                 for pid in sorted(pids):
-                    # pid_idx = np.where(pids==pid)[0]
                     pid_idx = pid2idx[pid]
-                # for pi, pid in enumerate(person_ids_ann):
-                    # pid_idx = np.where(pids_ann==pid)[0]
-                    # pid_idx = pid2idx[pid.item()]
-                    # if len(pid_idx)==0:
                     if pid_idx == 0:
                         head_bboxes.append(torch.zeros(4, dtype=torch.float32))
                         gaze_pts.append(torch.zeros(2, dtype=torch.float32)-1)
                         coatt_ids.append(0)
                         speaking_scores.append(-1)
                     else:
-                        # if len(pid_idx)>1:
-                            # print(pids, pid_idx)
-                            # print('error: more than one same pid!')
-                            # pid_idx = pid_idx[:1]
-
                         head_box = head_bbox_img[pid_idx].squeeze()
                         head_bboxes.append(head_box)
 
@@ -410,8 +327,6 @@ class VideoCoAttDataset_temporal(Dataset):
                         # get coatt id
                         find_coatt_id = False
                         for coatt_id, p_ids in coatt_p_ids.items():
-                            # if pid in p_ids:
-                            # if pid2idx[pid] in p_ids:
                             if pid_idx in p_ids:
                                 coatt_ids.append(coatt_id)
                                 find_coatt_id = True
@@ -419,30 +334,7 @@ class VideoCoAttDataset_temporal(Dataset):
                         if not find_coatt_id:
                             coatt_ids.append(0)
 
-                        '''
-                        if len(det_head_bboxes)>0 and pid>=0 and pid<self.pid_offset//2:
-                            speaking_scores.append(speaking_det[index_spk[pid_idx]])
-                        else:
-                            speaking_scores.append(-1)
-                        '''
-
                         speaking_scores.append(-1)
-
-                '''
-                # Process detected head bboxes
-                for pid in person_ids_det:
-                    pid_idx = np.where(pids_det==pid)[0]
-                    if len(pid_idx)>1:
-                        pid_idx = pid_idx[:1]
-                    gaze_pts.append(torch.zeros(2, dtype=torch.float32)-1)
-                    coatt_ids.append(0)
-                    if len(pid_idx)==0:
-                        speaking_scores.append(-1)
-                        head_bboxes.append(torch.zeros(4, dtype=torch.float32))
-                    else:
-                        speaking_scores.append(speaking_det[pid_idx])
-                        head_bboxes.append(det_head_bboxes[pid_idx].squeeze())
-                '''                 
 
                 # stack annotations
                 coatt_ids = torch.tensor(coatt_ids, dtype=torch.long)
@@ -587,15 +479,6 @@ class VideoCoAttDataset_temporal(Dataset):
                 t_sample['img_size'].append(sample['img_size'])
                 t_sample['path'].append(path)
 
-        '''
-        for key, item in t_sample.items():
-            if key not in ['dataset', 'path', 'pids']:
-                t_sample[key] = torch.stack(t_sample[key], axis=0).squeeze()
-                if self.temporal_context==0:
-                    t_sample[key] = t_sample[key].unsqueeze(0)
-        return t_sample
-        '''
-
         try:
             for key, item in t_sample.items():
                 if key not in ['dataset', 'path', 'pids']:
@@ -613,8 +496,8 @@ class VideoCoAttDataset_temporal(Dataset):
 
         # self.use_ratio = 0.01
         # self.use_ratio = 0.03
-        # self.use_ratio = 0.1
-        self.use_ratio = 0.5
+        self.use_ratio = 0.1
+        # self.use_ratio = 0.3
         # self.use_ratio = 1.0
         return int(len(self.paths) * self.use_ratio)
 

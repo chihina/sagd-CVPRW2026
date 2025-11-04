@@ -20,7 +20,7 @@ experiment:
     # dataset: childplay # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
     # dataset: uco_laeo # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
     path: ${hydra:runtime.cwd} # to retrieve logs and checkpoints
-    cuda: 2
+    cuda: 3
 
 # ------------------------------------------------------------------------------------------------------------------- #
 
@@ -28,8 +28,8 @@ data:
     num_samples: 36000    # GazeFollow: 108955, VAT: 9000, childplay: 15000, combined_social: 36000, laeo: 2900
     # num_people: 35 # /!\ int or -1 for all
     num_people: 10 # /!\ int or -1 for all
-    # num_coatt: 30
     num_coatt: 40
+    # num_coatt: 15
     return_depth: False # /!\
     return_head_mask: False # /!\
     image_size: 224 # /!\ used only for scene tokenizer
@@ -82,8 +82,16 @@ model:
         # multivit_weights: /home/nakatani/joint_attention_project/mtgs/src/weights/multimae-b_98_rgb+-depth-semseg_1600e_multivit-afff3f8c.pth
         # multivit_weights: /home/nakatani/joint_attention_project/mtgs/src/weights/multimae-b_98_rgb+-depth-semseg_1600e_timm-bafa5499.pth
         multivit_weights: False
+    interact:
+        # person_token_type: normal # {normal, w_gaze_hm, w_gaze_vec}
+        # person_token_type: w_gaze_vec
+        person_token_type: normal
     coatt_coatt_layer: self
     coatt_person_layer: sep
+    # coatt_hm_type: hm # {coef, hm, coef_iter}
+    # coatt_hm_type: coef # {coef, hm, coef_iter}
+    coatt_hm_type: coef_iter # {coef, hm, coef_iter}
+    coatt_coef_iter_cnt: 1
     weights: False # {False, path to weights}
 
 # ------------------------------------------------------------------------------------------------------------------- #
@@ -96,8 +104,8 @@ optimizer:
 # ------------------------------------------------------------------------------------------------------------------- #
 
 scheduler:
-    # type: CosineAnnealingWarmRestarts # {CosineAnnealingWarmRestarts, StepLR}
-    type: StepLR # {CosineAnnealingWarmRestarts, StepLR}
+    type: CosineAnnealingWarmRestarts # {CosineAnnealingWarmRestarts, StepLR}
+    # type: StepLR # {CosineAnnealingWarmRestarts, StepLR}
     warmup_epochs: 4 # /!\
     t_0_epochs: 20 # /!\
     t_mult: 1 # /!\
@@ -109,8 +117,11 @@ train:
     matmul_precision: medium # /!\ highest (default), high, medium
     precision: bf16-mixed # /!\ 64 (double), 32 (full), 16 (16bit mixed), bf16-mixed (bfloat16 mixed). Defaults to 32.
     epochs: 40 # /!\
+    batch_size: 64 # /!\
+    # batch_size: 32 # /!\
     # batch_size: 16 # /!\
-    batch_size: 4 # /!\
+    # batch_size: 8 # /!\
+    # batch_size: 4 # /!\
     accumulate_grad_batches: 1 # /!\
     device: cuda
     # resume: False
@@ -121,13 +132,18 @@ train:
 
     freeze:
         gaze_encoder: False  # /!\
+        # gaze_encoder: True  # /!\
         gaze_encoder_backbone: False # /!\
+        # gaze_encoder_backbone: True # /!\
         image_tokenizer: True  # /!\
         depth_tokenizer: False  # /!\
         vit_encoder: True  # /!\
         vit_adaptor: False  # /!\
+        # vit_adaptor: True  # /!\
         gaze_decoder: False  # /!\
+        # gaze_decoder: True  # /!\
         inout_decoder: False  # /!\
+        # inout_decoder: True  # /!\
     swa:
         use: True # /!\
         lr: [1e-6, 1e-6, 1e-6, 1e-6, 3e-7] # /!\ {1e-6, [3e-6, 3e-6, 1e-6]} float, or list of floats for each param group in optimizer
@@ -135,8 +151,8 @@ train:
         annealing_epochs: 6 # /!\
     # coatt_loss: False # /!\ True, False
     coatt_loss: True # /!\ True, False
-    social_loss: False # /!\ True, False
-    # social_loss: True # /!\ True, False
+    # social_loss: False # /!\ True, False
+    social_loss: True # /!\ True, False
 
 # ------------------------------------------------------------------------------------------------------------------- #
 

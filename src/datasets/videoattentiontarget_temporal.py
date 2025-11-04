@@ -235,7 +235,6 @@ class VideoAttentionTargetDataset_temporal(Dataset):
         curr_frame_nb = frame
 
         # read current frame
-        # img_path = os.path.join(self.root, 'images', path)
         data_name = path.split('/')[-3].replace('_', ' ')
         path_mod = os.path.join(data_name, path.split('/')[-2], path.split('/')[-1])
         img_path = os.path.join(self.root, 'images', path_mod)
@@ -254,61 +253,16 @@ class VideoAttentionTargetDataset_temporal(Dataset):
         frame_nbs = np.arange(curr_frame_nb-(self.temporal_stride*self.temporal_context), curr_frame_nb+(self.temporal_stride*self.temporal_context)+1, self.temporal_stride)
         
         # get annotated person ids
-        # pids_ann = img_annotations['person_id'].values
-        # head_bboxes = img_annotations[["head_xmin", "head_ymin", "head_xmax", "head_ymax"]]
-        # head_bboxes = torch.from_numpy(head_bboxes.values.astype(np.float32))
-
         head_bboxes = img_annotations['head_bboxes']
         head_bboxes = torch.from_numpy(head_bboxes.values[0].astype(np.float32))
         pids_ann = np.arange(len(head_bboxes))
 
-        if self.split=='train':    # shuffle pids
+        # if self.split=='train':    # shuffle pids
+        if self.split in ['train', 'val']:    # shuffle pids
             rand_indices = torch.randperm(head_bboxes.size(0))
             pids_ann = pids_ann[rand_indices]
         if len(pids_ann.shape)==0:
             pids_ann = np.expand_dims(pids_ann, 0)
-        
-        # get detected person ids
-        pids_det = torch.tensor([])
-        # if path in self.df_speaking.groups.keys():
-        #     df_speaking_frame = self.df_speaking.get_group(path)
-        #     det_head_bboxes = np.stack([df_speaking_frame['xmin'].values*img_w, df_speaking_frame['ymin'].values*img_h, df_speaking_frame['xmax'].values*img_w, df_speaking_frame['ymax'].values*img_h], axis=1)
-        #     det_head_bboxes = torch.from_numpy(det_head_bboxes.astype(np.float32))
-        #     pids_det = df_speaking_frame['id'].values + self.pid_offset    # add offset to detected people ids
-        
-        # keep non-overlapping detected heads
-        index_spk = torch.zeros(len(pids_ann)); index_spk_keep = torch.zeros(len(pids_ann))
-        if len(pids_det) > 0:
-            # merge annotated head bboxes
-            ious = box_iou(det_head_bboxes, head_bboxes)
-            ious_spk, index_spk = torch.max(ious, axis=0)
-            index_spk = pids_det[index_spk]
-            index_spk_keep = ious_spk >= 0.5
-            if len(index_spk.shape)==0:
-                index_spk = torch.tensor([index_spk])
-                index_spk_keep = torch.tensor([index_spk_keep])
-            
-            ious_bbox, _ = torch.max(ious, axis=1)
-            index_bbox_keep = ious_bbox < 0.3
-            pids_det = pids_det[index_bbox_keep.numpy()]
-            if len(pids_det.shape)==0:
-                pids_det = np.expand_dims(pids_det, 0)
-            elif self.split=='train' and len(pids_det)>1:    # shuffle pids
-                rand_indices = torch.randperm(len(pids_det))
-                pids_det = pids_det[rand_indices]
-
-        '''
-        # keep up to num_people ids
-        person_ids = np.concatenate([pids_ann, pids_det])
-        num_heads = len(person_ids)
-        num_keep = num_heads
-        if self.num_people!='all':
-            batch_num_heads = self.num_people
-            if num_heads>1:
-                num_keep = np.random.randint(2, min(num_heads, self.num_people)+1)
-        else:
-            batch_num_heads = num_heads
-        '''
 
         person_ids = pids_ann
         num_heads = len(person_ids)
@@ -316,12 +270,20 @@ class VideoAttentionTargetDataset_temporal(Dataset):
 
         if self.num_people!='all':
             batch_num_heads = self.num_people
+            if num_heads>1:
+                # num_keep = np.random.randint(2, min(num_heads, self.num_people)+1)
+                num_keep = min(num_heads, self.num_people)
         else:
             batch_num_heads = num_heads
+        
+        '''
+        if self.num_people!='all':
+            batch_num_heads = self.num_people
+        else:
+            batch_num_heads = num_heads
+        '''
 
         person_ids = person_ids[:num_keep]
-        person_ids_ann = person_ids[person_ids<self.pid_offset]
-        person_ids_det = person_ids[person_ids>=self.pid_offset]
         
         # randomly choose to apply the horizontal flip augmentation
         self.horizontal_flip = False
@@ -391,23 +353,9 @@ class VideoAttentionTargetDataset_temporal(Dataset):
                 img_w, img_h = image.size
                 
                 pcd = torch.zeros((3, img_h, img_w), dtype=torch.float32)
-                
-                # Get detected head bboxes
-                # if path in self.df_speaking.groups.keys():
-                if False:
-                    df_speaking_frame = self.df_speaking.get_group(path)
-                    det_head_bboxes = np.stack([df_speaking_frame['xmin'].values*img_w, df_speaking_frame['ymin'].values*img_h, df_speaking_frame['xmax'].values*img_w, df_speaking_frame['ymax'].values*img_h], axis=1)
-                    det_head_bboxes = torch.from_numpy(det_head_bboxes.astype(np.float32))
-                    pids_det = torch.from_numpy(df_speaking_frame['id'].values) + self.pid_offset
-                    speaking_det = torch.from_numpy(df_speaking_frame['score'].values.astype(np.float32))
-                else:
-                    pids_det = torch.tensor([])
-                    det_head_bboxes = []
 
                 # Load annotations for selected person ids
                 img_annotations = self.annotations.get_group(path)
-                # pids_ann = img_annotations["person_id"].values 
-
                 head_bboxes = img_annotations['head_bboxes']
                 head_bboxes = torch.from_numpy(head_bboxes.values[0].astype(np.float32))
                 pids_ann = np.arange(len(head_bboxes))
@@ -427,20 +375,26 @@ class VideoAttentionTargetDataset_temporal(Dataset):
                 pairs = img_annotations['pairs'].values[0]
                 pids = img_annotations["person_ids"].values[0]
                 pid2idx = {pid: i for i, pid in enumerate(pids)}
+                idx2pid = {i: pid for i, pid in enumerate(pids)}
                 pairs = [(pid2idx[i], pid2idx[j]) for i,j in pairs]
 
-                # define the dict in which key: original person id, value: the order of the person id in this sample
-                # pids_ann_ori_set = set(pairs.flatten())
-                # pids_temp_to_stat_dict = {pid: pi for pi, pid in enumerate(sorted(pids_ann_ori_set))}
+                # during training, select fixed number of people for faster training
+                # if self.split=='train' and self.num_people != 'all':
+                if self.split in ['train', 'val'] and self.num_people != 'all':
+                    pids_pad = pids[0]
+                    pids_wo_pad = pids[1:]
+                    pids_wo_pad = np.random.permutation(pids_wo_pad)[:num_keep-1]
+                    pids = np.concatenate(([pids_pad], pids_wo_pad))
 
                 coatt_p_ids = {}
                 for pair_idx, coatt_pair in enumerate(coatt_pairs):
                     if coatt_pair == 1:
                         pair = pairs[pair_idx]
                         pid_1, pid_2 = map(int, pair)
-                        # pid_1 = pids_temp_to_stat_dict[pid_1]
-                        # pid_2 = pids_temp_to_stat_dict[pid_2]
                         
+                        if not (idx2pid[pid_1] in pids and idx2pid[pid_2] in pids):
+                            continue
+
                         find_coatt_id = False
                         for coatt_id, p_ids in coatt_p_ids.items():
                             if (pid_1 in p_ids) or (pid_2 in p_ids):
@@ -451,11 +405,7 @@ class VideoAttentionTargetDataset_temporal(Dataset):
                             coatt_p_ids[len(coatt_p_ids)+1] = set([pid_1, pid_2])
 
                 for pid in sorted(pids):
-                    # pid_idx = np.where(pids==pid)[0]
                     pid_idx = pid2idx[pid]
-                # for pi, pid in enumerate(person_ids_ann):
-                    # pid_idx = np.where(pids_ann==pid)[0]
-                    # if len(pid_idx)==0:
                     if pid_idx == 0:
                         head_bboxes.append(torch.zeros(4, dtype=torch.float32))
                         gaze_pts.append(torch.zeros(2, dtype=torch.float32)-1)
@@ -463,16 +413,6 @@ class VideoAttentionTargetDataset_temporal(Dataset):
                         coatt_ids.append(0)
                         speaking_scores.append(-1)
                     else:
-                        # img_ann = img_annotations.iloc[pid_idx]
-
-                        # head_bbox = img_ann[["head_xmin", "head_ymin", "head_xmax", "head_ymax"]]
-                        # head_bbox = torch.from_numpy(head_bbox.values.astype(np.float32)).squeeze() 
-                        # head_bboxes.append(head_bbox)
-                        
-                        # gaze_pt = img_ann[["gaze_x", "gaze_y"]]
-                        # gaze_pt = torch.from_numpy(gaze_pt.values.astype(np.float32)).squeeze() 
-                        # gaze_pts.append(gaze_pt)
-                        
                         head_box = head_bbox_img[pid_idx].squeeze()
                         head_bboxes.append(head_box)
 
@@ -493,28 +433,9 @@ class VideoAttentionTargetDataset_temporal(Dataset):
                         io = inout_img[pid_idx].squeeze()
                         inout.append(io)
 
-                        if len(det_head_bboxes)>0:
-                            pid_idx = torch.where(pids_det==index_spk[pi])[0]
-                            if len(pid_idx)>0 and index_spk_keep[pi]:
-                                speaking_scores.append(speaking_det[pid_idx])
-                            else:
-                                speaking_scores.append(-1)
-                        else:
-                            speaking_scores.append(-1)
+                        speaking_scores.append(-1)
 
                 coatt_ids = torch.tensor(coatt_ids, dtype=torch.long)
-
-                # Process detected head bboxes
-                # for pid in person_ids_det:
-                #     pid_idx = np.where(pids_det==pid)[0]
-                #     gaze_pts.append(torch.zeros(2, dtype=torch.float32)-1)
-                #     inout.append(-1)
-                #     if len(pid_idx)==0:
-                #         speaking_scores.append(-1)
-                #         head_bboxes.append(torch.zeros(4, dtype=torch.float32))
-                #     else:
-                #         speaking_scores.append(speaking_det[pid_idx])
-                #         head_bboxes.append(det_head_bboxes[pid_idx].squeeze())
 
                 # stack annotations
                 head_bboxes = torch.stack(head_bboxes)
@@ -532,7 +453,6 @@ class VideoAttentionTargetDataset_temporal(Dataset):
                 # Extract Heads
                 heads = []
                 for head_bbox in head_bboxes:
-                    # heads.append(image.crop(head_bbox.int().tolist()))
                     head_xmin, head_ymin, head_xmax, head_ymax = head_bbox.tolist()
                     head_xmin, head_xmax = map(lambda x: int(x * img_w), (head_xmin, head_xmax))
                     head_ymin, head_ymax = map(lambda x: int(x * img_h), (head_ymin, head_ymax))
@@ -540,7 +460,7 @@ class VideoAttentionTargetDataset_temporal(Dataset):
                     heads.append(image.crop(head_bbox.int().tolist()))
 
                 num_valid_heads = len(heads)
-#                 num_missing_heads = max(self.num_people - num_valid_heads, 0) if self.num_people != "all" else 0    
+                # num_missing_heads = max(self.num_people - num_valid_heads, 0) if self.num_people != "all" else 0    
                 num_missing_heads = max(self.num_people + 1 - num_valid_heads, 1) if self.num_people != "all" else 1    # pad at least one person
 
                 # Get lah id

@@ -7,10 +7,11 @@ import einops
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from src.networks.rinnegan_multivit import TransformerBlock
 from torchvision import models
 import torchvision.transforms.functional as TF
 
-from src.utils import pair, build_2d_sincos_posemb
+from src.utils import pair, build_2d_sincos_posemb, spatial_argmax2d
 from src.networks.adaptor_modules import InteractionBlock, CoAttCrossAttention
 
 # ==================================================================================================================== #
@@ -186,6 +187,76 @@ class InteractNet(nn.Module):
         self.decoder_lah = LinearDecoderSocialGraph(proj_feature_dim*len(self.interaction_indexes))    # decoder for looking at heads
         self.decoder_sa = LinearDecoderSocialGraph(proj_feature_dim*len(self.interaction_indexes))    # decoder for shared attention
         
+        if self.cfg.model.coatt_hm_type == 'coef':
+            pass
+        elif self.cfg.model.coatt_hm_type == 'coef_iter':
+            self.coatt_coatt_layers_iter = 2
+
+            self.coatt_coatt_interaction_iter_all = nn.Sequential(*[
+                nn.Sequential(*[
+                    TransformerBlock(dim=self.coatt_dim+2, num_heads=2, mlp_ratio=0.25)
+                    for _ in range(self.coatt_coatt_layers_iter)
+                ])
+                for _ in range(self.cfg.model.coatt_coef_iter_cnt)
+            ])
+
+            self.coatt_token_ffn_iter_all = nn.Sequential(*[
+                nn.Sequential(
+                    nn.LayerNorm(self.coatt_dim+2),
+                    nn.Linear(self.coatt_dim+2, self.coatt_dim+2),
+                    nn.GELU(),
+                    nn.Linear(self.coatt_dim+2, self.coatt_dim),
+                )
+                for i in range(self.cfg.model.coatt_coef_iter_cnt)
+            ])
+
+            # self.coatt_coatt_interaction_iter = nn.Sequential(*[
+                # TransformerBlock(dim=self.coatt_dim+2, num_heads=2, mlp_ratio=0.25)
+                # for i in range(self.coatt_coatt_layers_iter)
+            # ])
+
+            # self.coatt_token_ffn_iter = nn.Sequential(
+                # nn.LayerNorm(self.coatt_dim+2),
+                # nn.Linear(self.coatt_dim+2, self.coatt_dim+2),
+                # nn.GELU(),
+                # nn.Linear(self.coatt_dim+2, self.coatt_dim),
+            # )
+
+        elif self.cfg.model.coatt_hm_type == 'hm':
+            
+            '''
+            # build deconvolutional layers to predict co-attention heatmap from co-attention tokens
+            self.coatt_hm_decoder = nn.Sequential(
+                nn.ConvTranspose2d(self.coatt_dim, 256, kernel_size=4, stride=2, padding=1),  # 4x4 -> 8x8
+                nn.BatchNorm2d(256),
+                nn.ReLU(),
+                nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),  # 8x8 -> 16x16
+                nn.BatchNorm2d(128),
+                nn.ReLU(),
+                nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),  # 16x16 -> 32x32
+                nn.BatchNorm2d(64),
+                nn.ReLU(),
+                nn.ConvTranspose2d(64, 1, kernel_size=4, stride=2, padding=1),  # 32x32 -> 64x64
+            )
+            '''
+
+            '''
+            self.coatt_hm_decoder = HMDecoder(stride_level = 1,
+                                             patch_size = patch_size,
+                                             token_dim = self.coatt_dim,
+                                             image_size = image_size,
+                                             hm_size = self.hm_size)
+            '''
+            
+            self.coatt_hm_decoder = SimplerHeatmapDecoderCoatt(token_dim = token_dim,
+                                                               token_dim_coatt = self.coatt_dim,
+                                                         h = self.image_size[1]//patch_size,
+                                                         w = self.image_size[0]//patch_size,
+                                                         output_hm_size = self.hm_size)
+
+        else:
+            assert False, 'Incorrect coatt_hm_type selected!!!'
+
     def forward(self, x):
         # Expected x = {"image": image, "heads": heads, "head_bboxes": head_bboxes, "coatt_ids": coatt_ids}
         
@@ -240,6 +311,9 @@ class InteractNet(nn.Module):
             _, _, hm_height, hm_width = gaze_hm.shape
             gaze_hm = gaze_hm.view(b, t, n, hm_height, hm_width)
 
+            gaze_pt_pred = spatial_argmax2d(gaze_hm.reshape(b*t*n, hm_height, hm_width), normalize=True)
+            gaze_pt_pred = gaze_pt_pred.view(b*t, n, 2)
+
         # project and concat person tokens from each gaze layer
         person_tokens = [self.gaze_projs[i](gaze_layer) for i, gaze_layer in enumerate(gaze_layers)]
         person_tokens = torch.cat(person_tokens, axis=-1)
@@ -254,7 +328,14 @@ class InteractNet(nn.Module):
         coatt_tokens = coatt_tokens.view(b*t, self.num_coatt, self.coatt_dim)  # (b*t, coatt_num, D)
 
         # estimate coatt level by multiplying coatt_tokens_up and person_tokens_up
-        person_tokens_coatt = person_tokens.view(b*t, n, self.coatt_dim)  # (b*t, n, D)
+        if self.cfg.model.interact.person_token_type == 'normal':
+            person_tokens_coatt = person_tokens.view(b*t, n, self.coatt_dim)  # (b*t, n, D)
+        elif self.cfg.model.interact.person_token_type == 'w_gaze_vec':
+            # person_tokens_coatt = torch.cat([person_tokens, gaze_pt_pred], dim=-1)  # (b*t, n, D+2)
+            gaze_pt_pred_x = gaze_pt_pred[:,:,0:1].view(b*t, n, 1).expand(-1,-1,self.coatt_dim//2)
+            gaze_pt_pred_y = gaze_pt_pred[:,:,1:2].view(b*t, n, 1).expand(-1,-1,self.coatt_dim//2)
+            gaze_pt_pred_xy = torch.cat([gaze_pt_pred_x, gaze_pt_pred_y], dim=-1)  # (b*t, n, D)
+            person_tokens_coatt = person_tokens + gaze_pt_pred_xy
 
         # coatt-coatt interaction
         for i in range(self.coatt_coatt_layers):
@@ -279,13 +360,50 @@ class InteractNet(nn.Module):
 
         # Predict Coatt Heatmap by multiplying coatt_level and gaze_hm
         if self.output=='heatmap':
-            gaze_hm_view = gaze_hm.view(b, t, 1, n, hm_height, hm_width)
-            inout_view = inout.view(b, t, 1, n, 1, 1)
-            coatt_level_w_prob_view = coatt_level_w_prob.view(b, t, self.num_coatt, n, 1, 1)
-            # coatt_hm = gaze_hm_view * coatt_level_w_prob_view  # (b, t, coatt_num, n, hm_height, hm_width)
-            # coatt_hm = (inout_view * gaze_hm_view) * coatt_level_w_prob_view  # (b, t, coatt_num, n, hm_height, hm_width)
-            coatt_hm = coatt_level_w_prob_view * gaze_hm_view  # (b, t, coatt_num, n, hm_height, hm_width)
-            coatt_hm = coatt_hm.mean(dim=3)  # average over people dimension
+            if 'coef' in self.cfg.model.coatt_hm_type:
+                gaze_hm_view = gaze_hm.view(b, t, 1, n, hm_height, hm_width)
+                inout_view = inout.view(b, t, 1, n, 1, 1)
+                coatt_level_w_prob_view = coatt_level_w_prob.view(b, t, self.num_coatt, n, 1, 1)
+                coatt_hm = coatt_level_w_prob_view * gaze_hm_view  # (b, t, coatt_num, n, hm_height, hm_width)
+                coatt_hm = coatt_hm.mean(dim=3)  # average over people dimension
+                if self.cfg.model.coatt_hm_type == 'coef_iter':
+                    for iter in range(self.cfg.model.coatt_coef_iter_cnt):
+                        # apply soft-argmax to get coatt points
+                        coatt_hm_pt = spatial_argmax2d(coatt_hm.reshape(b*t*self.num_coatt, hm_height, hm_width), normalize=True)
+                        coatt_hm_pt = coatt_hm_pt.view(b*t, self.num_coatt, 2)
+
+                        # apply iterations of coatt-coatt layers
+                        coatt_tokens_pt = torch.cat([coatt_tokens_emb, coatt_hm_pt], dim=-1)  # (b*t*coatt_num, D+2)
+                        for i in range(self.coatt_coatt_layers_iter):
+                            coatt_tokens_pt = self.coatt_coatt_interaction_iter_all[iter][i](coatt_tokens_pt)
+                        
+                        # predict coatt_hm again
+                        coatt_tokens_pt_emb = self.coatt_token_ffn_iter_all[iter](coatt_tokens_pt)
+                        coatt_level_iter = torch.einsum('btd,bnd->btn', coatt_tokens_pt_emb, person_tokens_coatt_emb)
+                        coatt_level_iter_w_prob = torch.sigmoid(coatt_level_iter)
+                        coatt_level_iter_w_prob_view = coatt_level_iter_w_prob.view(b, t, self.num_coatt, n, 1, 1)
+                        coatt_hm = coatt_level_iter_w_prob_view * gaze_hm_view  # (b, t, coatt_num, n, hm_height, hm_width)
+                        coatt_hm = coatt_hm.mean(dim=3)  # average over people dimension
+
+            elif self.cfg.model.coatt_hm_type == 'hm':
+                '''
+                coatt_tokens_feat = coatt_tokens.view(b*t*self.num_coatt, self.coatt_dim).unsqueeze(-1).unsqueeze(-1)  # (b*t*coatt_num, D, 1, 1)
+                coatt_tokens_feat = coatt_tokens_feat.expand(-1, -1, 4, 4).permute(0,1,3,2)  # (b*t*coatt_num, D, 4, 4)
+                coatt_hm = self.coatt_hm_decoder(coatt_tokens_feat)  # (b*t*coatt_num, 1, hm_height, hm_width)
+                '''
+
+                '''
+                coatt_tokens = coatt_tokens.view(b*t*self.num_coatt, self.coatt_dim)  # (b*t*coatt_num, D)
+                coatt_hm = self.coatt_hm_decoder(coatt_tokens)  # (b*t*coatt_num, 1, hm_height, hm_width)
+                '''
+
+                coatt_hm = self.coatt_hm_decoder(img_layers[-1], coatt_tokens)  # (b*t*coatt_num, 1, hm_height, hm_width)
+
+                coatt_hm = coatt_hm.view(b, t, self.num_coatt, hm_height, hm_width)
+                coatt_pt_pred = spatial_argmax2d(coatt_hm.reshape(b*t*self.num_coatt, hm_height, hm_width), normalize=True)
+                coatt_pt_pred = gaze_pt_pred.view(b*t, n, 2)
+            else:
+                assert False, 'Incorrect coatt_hm_type selected!!!'
 
         # make person pairs
         indices = torch.tensor(list(itertools.permutations(torch.arange(n), 2))).T # (2, num_pairs)
@@ -886,6 +1004,32 @@ class SimplerHeatmapDecoder(nn.Module):
         
         return heatmap
 
+class SimplerHeatmapDecoderCoatt(nn.Module):
+    """
+    Project image tokens and gaze tokens, then perform a pixel-wise dot-product before 
+    upsampling to 64x64 using a resize operation.
+    """
+    def __init__(self, token_dim=768, token_dim_coatt=512, h=14, w=14, output_hm_size = (64,64), factor = 6):
+        super().__init__()
+        
+        self.h, self.w = h, w
+        self.num_img_tokens = h * w
+        self.output_hm_size = output_hm_size
+        
+        self.img_proj = MLP(token_dim, token_dim, token_dim // factor, drop_rate = 0.)
+        self.gaze_proj = MLP(token_dim_coatt, token_dim_coatt, token_dim // factor, drop_rate = 0.)
+        
+    def forward(self, x_img, x_gaze):
+        
+        b, n, d = x_gaze.shape
+        
+        x_img = self.img_proj(x_img).permute(0, 2, 1) # (b, h*w, d) > (b, h*w, d') > (b, d', h*w)
+        x_gaze = self.gaze_proj(x_gaze) # (b, n, d) > (b, n, d')
+        
+        heatmap = (x_gaze @ x_img).view(b, n, self.h, self.w) # (b, n, h*w) > (b, n, h', w')
+        heatmap = TF.resize(heatmap, (self.output_hm_size[1], self.output_hm_size[0]), antialias=True)
+        
+        return heatmap
     
     
 class HMDecoder(nn.Module):
