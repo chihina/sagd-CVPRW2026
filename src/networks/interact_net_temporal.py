@@ -191,7 +191,6 @@ class InteractNet(nn.Module):
             pass
         elif self.cfg.model.coatt_hm_type == 'coef_iter':
             self.coatt_coatt_layers_iter = 2
-
             self.coatt_coatt_interaction_iter_all = nn.Sequential(*[
                 nn.Sequential(*[
                     TransformerBlock(dim=self.coatt_dim+2, num_heads=2, mlp_ratio=0.25)
@@ -359,6 +358,7 @@ class InteractNet(nn.Module):
         coatt_level_w_prob = torch.sigmoid(coatt_level)
 
         # Predict Coatt Heatmap by multiplying coatt_level and gaze_hm
+        coatt_level_all = [coatt_level]
         if self.output=='heatmap':
             if 'coef' in self.cfg.model.coatt_hm_type:
                 gaze_hm_view = gaze_hm.view(b, t, 1, n, hm_height, hm_width)
@@ -384,7 +384,8 @@ class InteractNet(nn.Module):
                         coatt_level_iter_w_prob_view = coatt_level_iter_w_prob.view(b, t, self.num_coatt, n, 1, 1)
                         coatt_hm = coatt_level_iter_w_prob_view * gaze_hm_view  # (b, t, coatt_num, n, hm_height, hm_width)
                         coatt_hm = coatt_hm.mean(dim=3)  # average over people dimension
-
+                        coatt_level_all.append(coatt_level_iter)
+            
             elif self.cfg.model.coatt_hm_type == 'hm':
                 '''
                 coatt_tokens_feat = coatt_tokens.view(b*t*self.num_coatt, self.coatt_dim).unsqueeze(-1).unsqueeze(-1)  # (b*t*coatt_num, D, 1, 1)
@@ -425,6 +426,9 @@ class InteractNet(nn.Module):
             corr_idx = torch.where((indices==pair[[1,0]]).prod(-1))[0].item()
             laeo[:, pi] = torch.min(lah[:, pi],lah[:, corr_idx])
 
+        coatt_level_all = torch.stack(coatt_level_all, dim=0)  # (num_iters, b, t, coatt_num, n)
+        coatt_level_all_mean = coatt_level_all.mean(dim=0).view(b, t, self.num_coatt, n)
+
         if self.output=='heatmap':
             # return _, gaze_vec, gaze_hm, inout.view(b, t, n), lah.view(b, t, num_pairs), laeo.view(b, t, num_pairs), coatt.view(b, t, num_pairs), coatt_hm
             out = {}
@@ -435,7 +439,9 @@ class InteractNet(nn.Module):
             out['laeo'] = laeo.view(b, t, num_pairs)
             out['coatt'] = coatt.view(b, t, num_pairs)
             out['coatt_hm'] = coatt_hm
-            out['coatt_level'] = coatt_level.view(b, t, self.num_coatt, n)
+            # out['coatt_level'] = coatt_level.view(b, t, self.num_coatt, n)
+            out['coatt_level'] = coatt_level_all_mean
+
             out['person_tokens'] = person_tokens.view(b, t, n, -1)
 
             return out

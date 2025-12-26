@@ -22,6 +22,9 @@ from src.models import BaselineModel, ChongModel, NoraModel, SharinganModel, Int
 from src.tracking import init_logger, save_code_snapshot
 from src.utils import Stage
 import sys
+import os
+import yaml
+import omegaconf
 
 TERM_COLOR = "cyan"
 
@@ -224,12 +227,10 @@ class Experiment(BaseExperiment):
     def init_callbacks(self):
         
         callbacks = []
-        
-        # Model Checkpoint
-        date_time = dt.datetime.now().strftime("%Y-%m-%d/%H-%M-%S")
-        model_prefix = f"COA_{self.cfg.train.coatt_loss}_SOC_{self.cfg.train.social_loss}"
+
         checkpoint_cb = ModelCheckpoint(
-            dirpath=f"./checkpoints/{self.cfg.experiment.dataset}/{date_time}_{model_prefix}",
+            # dirpath=f"./checkpoints/{self.cfg.experiment.dataset}/{date_time}_{model_prefix}",
+            dirpath=f"./checkpoints/{self.cfg.experiment.dataset}/{self.cfg.experiment.exp_id}",
             filename="best",  # custom: "{epoch:02d}-{step:02d}-{val_acc:.3f}",
             monitor="metric/val/dist",  # "metric/val/ap", "metric/val/acc", "loss/val"
             mode="min",  # "min", "max"
@@ -264,6 +265,13 @@ class Experiment(BaseExperiment):
         # Base Fine Tuning
         #bft_callback = PretrainedFreezeUnfreeze(unfreeze_at_epoch=10)
         #callbacks.append(bft_callback)
+
+        # Save cfg as a yaml file
+        save_yaml_file = os.path.join(checkpoint_cb.dirpath, "config.yaml")
+        os.makedirs(checkpoint_cb.dirpath, exist_ok=True)
+        with open(save_yaml_file, 'w') as f:
+            yaml.dump(omegaconf.OmegaConf.to_container(self.cfg, resolve=True), f)
+        print(colored(f"Saved config file to: {save_yaml_file}", TERM_COLOR))
 
         return callbacks
 
@@ -314,7 +322,7 @@ class Experiment(BaseExperiment):
         self.model = self.init_model()
 
         # INIT LOGGER
-        self.logger = init_logger(cfg=self.cfg) if ("train" in self.tasks) else None
+        self.logger, self.cfg = init_logger(cfg=self.cfg) if ("train" in self.tasks) else (None, self.cfg)
 
         # INIT CALLBACKS
         self.callbacks = self.init_callbacks() if ("train" in self.tasks) else None

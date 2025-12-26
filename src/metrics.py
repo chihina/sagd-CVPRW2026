@@ -18,6 +18,7 @@ from src.utils import generate_binary_gaze_heatmap, generate_gaze_heatmap, spati
 
 from torch_linear_assignment import batch_linear_assignment, assignment_to_indices
 
+from torch.nn import functional as F
 
 class Distance(tm.Metric):
     higher_is_better = False
@@ -198,7 +199,6 @@ class GFTestAUC(tm.Metric):
 
 #         return hm_dist, hm_dist_masked
 
-
 class GroupIoU():
     def __init__(self):
         pass
@@ -269,8 +269,136 @@ class GroupIoU():
 
         return hm_dist, hm_dist_masked
 
+class GroupCost():
+    def __init__(self):
+        pass
+
+    def calculateAveragePrecision(self, rec, prec):
+        mrec = [0] + [e for e in rec] + [1]
+        mpre = [0] + [e for e in prec] + [0]
+
+        for i in range(len(mpre) - 1, 0, -1):
+            mpre[i - 1] = max(mpre[i - 1], mpre[i])
+
+        ii = []
+
+        for i in range(len(mrec) - 1):
+            if mrec[1:][i] != mrec[0:-1][i]:
+                ii.append(i + 1)
+
+        ap = 0
+        for i in ii:
+            ap = ap + np.sum((mrec[i] - mrec[i - 1]) * mpre[i])
+
+        return [ap, mpre[0:len(mpre) - 1], mrec[0:len(mpre) - 1], ii]
+
+    def cal_group_IoU(self, gt: torch.Tensor, pred: torch.Tensor):
+        gt_grp_id = torch.where(gt==1)[0]
+        gt_non_grp_id = torch.where(gt==0)[0]
+        pred_grp_id = torch.where(pred==1)[0]
+        pred_non_grp_id = torch.where(pred==0)[0]
+
+        intersection = len(set(gt_grp_id.cpu().numpy()).intersection(set(pred_grp_id.cpu().numpy())))
+        union = len(set(gt_grp_id.cpu().numpy()).union(set(pred_grp_id.cpu().numpy())))
+        if union==0:
+            iou = torch.tensor(0.0, device=gt.device)
+        else:
+            iou = intersection / union
+
+        return iou
+    
+    def cal_coatt_dist(self, hm_pred: torch.Tensor, hm_gt: torch.Tensor):
+        hm_pred_pnt = spatial_argmax2d(hm_pred, normalize=True)
+        hm_gt_pnt = spatial_argmax2d(hm_gt, normalize=True)
+        hm_dist = (hm_gt_pnt - hm_pred_pnt).pow(2).sum(-1).sqrt()
+
+        return hm_dist
+
+    def compute(self, grouping_pred: torch.Tensor, grouping_gt: torch.Tensor, hm_pred: torch.Tensor, hm_gt: torch.Tensor):
+        group_ious = []
+        dists = []
+
+        batch_num, coatt_num_gt, people_num = grouping_gt.shape
+        _, coatt_num_pred, _ = grouping_pred.shape
+
+        grouping_empty = torch.zeros((1, people_num), device=grouping_gt.device)
+        coatt_empty = torch.zeros((1, 2), device=grouping_gt.device)
+
+        hm_h, hm_w = hm_pred.shape[2], hm_pred.shape[3]
+        coatt_pt_gt = spatial_argmax2d(hm_gt.reshape(batch_num*coatt_num_gt, hm_h, hm_w), normalize=True).view(batch_num, coatt_num_gt, -1)
+        coatt_pt_pred = spatial_argmax2d(hm_pred.reshape(batch_num*coatt_num_pred, hm_h, hm_w), normalize=True).view(batch_num, coatt_num_pred, -1)
+
+        for b in range(batch_num):
+            grouping_gt_b = grouping_gt[b]
+            grouping_pred_b = grouping_pred[b]
+            coatt_pt_gt_b = coatt_pt_gt[b]
+            coatt_pt_pred_b = coatt_pt_pred[b]
+
+            # remove empty groups
+            gt_b_mask = grouping_gt_b.sum(dim=-1)>0
+            grouping_gt_b = grouping_gt_b[gt_b_mask]
+            grouping_gt_b = torch.cat([grouping_gt_b, grouping_empty], dim=0)
+            coatt_pt_gt_b = coatt_pt_gt_b[gt_b_mask]
+            coatt_pt_gt_b = torch.cat([coatt_pt_gt_b, coatt_empty], dim=0)
+
+            # remove non-group predictions
+            pred_b_mask = grouping_pred_b.sum(dim=-1)>0
+            grouping_pred_b = grouping_pred_b[pred_b_mask]
+            coatt_pt_pred_b = coatt_pt_pred_b[pred_b_mask]
+
+            # add empty group if no predictions
+            if grouping_pred_b.shape[0]==0:
+                grouping_pred_b = grouping_empty
+                coatt_pt_pred_b = coatt_empty
+
+            # get numbers of groups
+            pred_num = grouping_pred_b.shape[0]
+            gt_num = grouping_gt_b.shape[0]
+
+            # create IoU matrix
+            group_iou_matrix = torch.zeros((1, gt_num, pred_num), device=grouping_gt.device)
+            dist_matrix = torch.zeros((1, gt_num, pred_num), device=grouping_gt.device)
+            for gt_idx in range(gt_num):
+                for pred_idx in range(pred_num):
+                    # compute IoU
+                    gt = grouping_gt_b[gt_idx]
+                    pred = grouping_pred_b[pred_idx]
+                    iou = self.cal_group_IoU(gt, pred)
+                    group_iou_matrix[0, gt_idx, pred_idx] = iou
+
+                    # compute co-attention distance
+                    coatt_pt_gt_one = coatt_pt_gt_b[gt_idx]
+                    coatt_pt_pred_one = coatt_pt_pred_b[pred_idx]
+                    dist = torch.norm(coatt_pt_gt_one - coatt_pt_pred_one, p=2)
+                    dist_matrix[0, gt_idx, pred_idx] = dist
+
+            # solve the linear assignment problem
+            cost_matrix = -group_iou_matrix
+            assignment = batch_linear_assignment(cost_matrix)
+            row_ind, col_ind = assignment_to_indices(assignment)
+            
+            # compute the cost for the assigned pairs
+            cost_minimums = cost_matrix[torch.arange(cost_matrix.shape[0]).unsqueeze(1), row_ind, col_ind]
+            group_iou_mean = torch.mean(cost_minimums) * -1.0  # mean IoU over assigned pairs
+            group_ious.append(group_iou_mean.item())
+
+            # compute the co-attention distance for the assigned pairs
+            dist_assigned = dist_matrix[torch.arange(dist_matrix.shape[0]).unsqueeze(1), row_ind, col_ind]
+            dist_mean = torch.mean(dist_assigned)
+            dists.append(dist_mean.item())
+
+        group_ious_mean = np.mean(group_ious)
+        dists_mean = np.mean(dists)
+
+        ret_metrics = {
+            'Group_IoU': group_ious_mean,
+            'Group_Dist': dists_mean
+        }
+
+        return ret_metrics
+    
+
 class GroupAP():
-    # def __init__(self, iou_thresh=0.5):
     def __init__(self, iou_thresh=0.75):
         self.iou_thresh = iou_thresh
 
@@ -293,34 +421,87 @@ class GroupAP():
 
         return [ap, mpre[0:len(mpre) - 1], mrec[0:len(mpre) - 1], ii]
 
+    def cal_group_IoU(self, gt: torch.Tensor, pred: torch.Tensor):
+        gt_grp_id = torch.where(gt==1)[0]
+        gt_non_grp_id = torch.where(gt==0)[0]
+        pred_grp_id = torch.where(pred==1)[0]
+        pred_non_grp_id = torch.where(pred==0)[0]
+
+        intersection = len(set(gt_grp_id.cpu().numpy()).intersection(set(pred_grp_id.cpu().numpy())))
+        union = len(set(gt_grp_id.cpu().numpy()).union(set(pred_grp_id.cpu().numpy())))
+        if union==0:
+            iou = torch.tensor(0.0, device=gt.device)
+        else:
+            iou = intersection / union
+        
+        return iou
+
+    
+    def cal_coatt_dist(self, hm_pred: torch.Tensor, hm_gt: torch.Tensor):
+        hm_pred_pnt = spatial_argmax2d(hm_pred, normalize=True)
+        hm_gt_pnt = spatial_argmax2d(hm_gt, normalize=True)
+        hm_dist = (hm_gt_pnt - hm_pred_pnt).pow(2).sum(-1).sqrt()
+
+        return hm_dist
+
     def compute(self, grouping_pred: torch.Tensor, grouping_gt: torch.Tensor, hm_pred: torch.Tensor, hm_gt: torch.Tensor):
+        npos = 0
         TP = []
         FP = []
-        dists = []
-        npos = 0
         npos_dist = 0
-        for b in range(grouping_gt.shape[0]):
+        dists = []
+
+        batch_all = len(grouping_gt)
+        confidence_scores_all = torch.tensor([], device=grouping_gt[0].device)
+        for b in range(batch_all):
+            # get the ground-truth groups
             grouping_gt_b = grouping_gt[b]
-            grouping_gt_b = grouping_gt_b[grouping_gt_b.sum(dim=-1)>1]  # remove empty groups
+            _, g_token_num_ori, people_num = grouping_gt_b.shape
+            grouping_gt_b = grouping_gt_b.view(g_token_num_ori, people_num)
+            grouping_gt_b = grouping_gt_b[grouping_gt_b.sum(dim=-1)>1]
             npos += grouping_gt_b.shape[0]
 
+            # get the predicted groups
             grouping_pred_b = grouping_pred[b]
-            grouping_pred_b = grouping_pred_b[grouping_pred_b.sum(dim=-1)>1]  # remove empty groups
+            grouping_pred_b = grouping_pred_b.view(-1, people_num)
 
-            det_gt = torch.zeros(grouping_gt_b.shape[0], dtype=torch.bool, device=grouping_gt.device)
+            # get the heatmaps
+            hm_pred_b = hm_pred[b]
+            hm_gt_b = hm_gt[b]
+            _, _, H, W = hm_pred_b.shape
+            hm_pred_b = hm_pred_b.view(-1, H, W)
+            hm_gt_b = hm_gt_b.view(-1, H, W)
 
+            group_flag = grouping_pred_b.sum(dim=-1) > 1
+            if group_flag.sum() == 0:
+                continue
+            grouping_pred_b = grouping_pred_b[group_flag]
+            hm_pred_b = hm_pred_b[group_flag]
+
+            # compute confidence scores for each predicted group
+            # grouping_pred_b_conf = torch.mean(grouping_pred_b, dim=-1, dtype=torch.float32)
+            # confidence_scores = torch.cat([confidence_scores, grouping_pred_b_conf])
+
+            # compute confidence scores for each predicted group
+            hm_pred_b_flat = hm_pred_b.view(hm_pred_b.shape[0], H*W)
+            hm_pred_b_peak_vals, _ = torch.max(hm_pred_b_flat, dim=-1)
+            confidence_scores = hm_pred_b_peak_vals
+            confidence_scores_all = torch.cat([confidence_scores_all, confidence_scores])
+
+            # sort predictions by confidence scores
+            confidence_scores, sorted_indices = torch.sort(confidence_scores, descending=True)
+            grouping_pred_b = grouping_pred_b[sorted_indices]
+            hm_pred_b = hm_pred_b[sorted_indices]
+
+            # match the predictions to ground-truth
+            det_gt = torch.zeros(grouping_gt_b.shape[0], dtype=torch.bool, device=grouping_gt_b.device)
             for pred_idx in range(grouping_pred_b.shape[0]):
                 pred = grouping_pred_b[pred_idx]
                 ious = []
                 for gt_idx in range(grouping_gt_b.shape[0]):
                     gt = grouping_gt_b[gt_idx]
-                    intersection = torch.sum((gt==1) & (pred==1)).float()
-                    union = torch.sum((gt==1) | (pred==1)).float()
-                    if union==0:
-                        iou = torch.tensor(0.0, device=grouping_gt.device)  # if both empty, iou=0
-                    else:
-                        iou = intersection / union
-                    ious.append(iou.item())
+                    iou = self.cal_group_IoU(gt, pred)
+                    ious.append(iou)
                 ious = torch.tensor(ious)
                 max_iou = ious.max() if len(ious)>0 else torch.tensor(0.0)
 
@@ -329,15 +510,15 @@ class GroupAP():
                         TP.append(1)
                         FP.append(0)
 
-                        hm_pred_target = hm_pred[b, pred_idx]
-                        hm_pred_target_pnt = spatial_argmax2d(hm_pred_target, normalize=True)
-                        hm_gt_target = hm_gt[b, ious.argmax()]
-                        hm_gt_target_pnt = spatial_argmax2d(hm_gt_target, normalize=True)
-                        hm_dist = (hm_gt_target_pnt - hm_pred_target_pnt).pow(2).sum(-1).sqrt()  # (b, token_size)
+                        # mark gt as detected
+                        det_gt[ious.argmax()] = True
+
+                        # compute hm distance if matched
+                        hm_pred_target = hm_pred_b[pred_idx]
+                        hm_gt_target = hm_gt_b[ious.argmax()]
+                        hm_dist = self.cal_coatt_dist(hm_pred_target.unsqueeze(0), hm_gt_target.unsqueeze(0))
                         dists.append(hm_dist.item())
                         npos_dist += 1
-
-                        det_gt[ious.argmax()] = True
                     else:
                         FP.append(1)
                         TP.append(0)
@@ -345,13 +526,17 @@ class GroupAP():
                     FP.append(1)
                     TP.append(0)
 
-        TP = np.array(TP)
-        FP = np.array(FP)
-        acc_FP = np.cumsum(FP)
+        # sort TP and FP based on confidence scores
+        confidence_scores_all, sorted_indices = torch.sort(confidence_scores_all, descending=True)
+        TP = torch.tensor(TP, device=confidence_scores_all.device)[sorted_indices].cpu().numpy()
+        FP = torch.tensor(FP, device=confidence_scores_all.device)[sorted_indices].cpu().numpy()
+
+        # Compute cumulative sums
         acc_TP = np.cumsum(TP)
+        acc_FP = np.cumsum(FP)
         rec = acc_TP / npos
         prec = np.divide(acc_TP, (acc_FP + acc_TP))
-        [ap, mpre, mrec, ii] = self.calculateAveragePrecision(rec, prec)
+        ap, mpre, mrec, ii = self.calculateAveragePrecision(rec.tolist(), prec.tolist())
 
         ret_metrics = {
             'ap': ap,
@@ -359,10 +544,6 @@ class GroupAP():
             'rec': rec,
             'npos': npos,
             'npos_dist': npos_dist,
-            'TP': TP,
-            'FP': FP,
-            'acc_TP': acc_TP,
-            'acc_FP': acc_FP,
             'dist': np.mean(dists)
         }
 

@@ -28,7 +28,7 @@ from timm.scheduler import CosineLRScheduler
 from torch_linear_assignment import batch_linear_assignment, assignment_to_indices
 
 from src.losses import compute_chong_loss, compute_sharingan_loss, compute_rinnegan_loss, compute_social_loss, compute_interact_loss, compute_inout_loss, compute_coatt_loss
-from src.metrics import AUC, Distance, GFTestAUC, GFTestDistance, GroupIoU, GroupAP
+from src.metrics import AUC, Distance, GFTestAUC, GFTestDistance, GroupCost, GroupAP
 from src.networks.chong import ChongNet, GazeBaseline, NoraNet
 # from src.networks.rinnegan import Rinnegan
 # from src.networks.rinnegan_multivit import MultiViTRinnegan
@@ -570,8 +570,6 @@ class InteractModel(pl.LightningModule):
         ni = int((batch["inout"]==1).sum().item())
         # assert n == ni, f"Expected all test samples to be looking inside. Got {n} samples, {ni} of which are looking inside."
 
-        start_time = time.time()
-
         # Forward pass
         if self.output=='heatmap':
             out = self(batch)
@@ -675,8 +673,6 @@ class InteractModel(pl.LightningModule):
         if 'coatt_heatmaps' in batch and 'coatt_levels' in batch:
             coatt_levels_gt = batch['coatt_levels'][:,middle_frame_idx,:,:]
             coatt_hm_gt = batch['coatt_heatmaps'][:,middle_frame_idx,:,:,:]
-            # group_iou_thresh_list = [0.5, 0.75, 1.0]
-            group_iou_thresh_list = [0.75, 1.0]
 
             # >>>>>>>>> grouping metrics based on pair-wise estimation <<<<<<<<<<
             _, num_people = batch["coatt_ids"][:,middle_frame_idx,:].shape
@@ -684,7 +680,7 @@ class InteractModel(pl.LightningModule):
             batch_size, token_size = coatt_levels_gt.shape[0], coatt_levels_gt.shape[1]
 
             # generate edges for a graph
-            resolution_list = [1.4, 1.6]
+            resolution_list = [round(0.1 * i, 1) for i in range(1, 15, 2)]
             edges = []
             for ind in range(indices.shape[0]):
                 i, j = indices[ind]
@@ -693,39 +689,65 @@ class InteractModel(pl.LightningModule):
             G.add_edges_from(edges)
             for res in resolution_list:
                 partition = community.best_partition(G, weight='weight', resolution=res)
-                coatt_level_pred_label = torch.zeros_like(coatt_levels_gt)
+                coatt_level_pred_label_pairs = torch.zeros_like(coatt_levels_gt)
                 group_ids = list(set(partition.values()))
                 node_ids = list(partition.keys())
                 for g_id in group_ids:
                     members = [node for node, comm_id in partition.items() if comm_id == g_id]
                     if len(members)>1 and len(members)<=token_size:
-                        coatt_level_pred_label[0, g_id, members] = 1
+                        coatt_level_pred_label_pairs[0, g_id, members] = 1
+
+                group_cost = GroupCost()
+                coatt_hm_pred_pairs_sample = self.generate_coatt_hm_from_level(coatt_level_pred_label_pairs, gaze_hm_pred)
+                # ret_metrics = group_cost.compute(coatt_level_pred_label_pairs, coatt_levels_gt, coatt_hm_pred, coatt_hm_gt)
+                ret_metrics = group_cost.compute(coatt_level_pred_label_pairs, coatt_levels_gt, coatt_hm_pred_pairs_sample, coatt_hm_gt)
+                self.log(f"metric/test/coatt_cost_iou_pairs_{res}", ret_metrics['Group_IoU'], batch_size=1, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+                self.log(f"metric/test/coatt_cost_dist_pairs_{res}", ret_metrics['Group_Dist'], batch_size=1, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
+
+            # >>>>>>>>> grouping metrics based on post-processing <<<<<<<<<<
+            inout_thr = 0.5
+            dist_thr_list = np.linspace(0, 0.2, 5).tolist()
+            dist_thr_list = [round(d, 2) for d in dist_thr_list]
+            out_mask = inout_pred[0] < inout_thr
+
+            for dist_thr in dist_thr_list:
+                coatt_level_pred_label_pp = []
+                grp_pis = set()
+                for pi in range(num_people):
+                    if pi in grp_pis:
+                        continue
+                    gaze_pt_pred_p = gaze_pt_pred[0, pi]
+                    dists_xy = gaze_pt_pred[0] - gaze_pt_pred_p
+                    dists = torch.norm(dists_xy, dim=-1)
+                    dists[out_mask] = float('inf')
+                    close_indices = torch.where((dists<dist_thr).int())[0]
+                    if len(close_indices)>1:
+                        coatt_level_pred_grp = torch.zeros((num_people), device=gaze_pt_pred.device)
+                        coatt_level_pred_grp[close_indices] = 1
+                        coatt_level_pred_label_pp.append(coatt_level_pred_grp)
+                        grp_pis = grp_pis | set(close_indices.tolist())
                 
-                for grp_iou_thr in group_iou_thresh_list:
-                    group_ap = GroupAP(iou_thresh=grp_iou_thr)
-                    ret_metrics = group_ap.compute(coatt_level_pred_label, coatt_levels_gt, coatt_hm_pred, coatt_hm_gt)
-                    npos =  ret_metrics['npos']
-                    if npos>0:
-                        self.log(f"metric/test/coatt_ap_sim_pairs_{res}_{grp_iou_thr}", ret_metrics['ap'], batch_size=1, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
-                    npos_dist =  ret_metrics['npos_dist']
-                    if npos_dist>0:
-                        self.log(f"metric/test/coatt_ap_sim_pairs_{res}_{grp_iou_thr}_dist", ret_metrics['dist'], batch_size=1, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+                if len(coatt_level_pred_label_pp)==0:
+                    coatt_level_pred_label_pp = torch.zeros((1, 1, num_people), device=gaze_pt_pred.device)
+                else:
+                    coatt_level_pred_label_pp = torch.stack(coatt_level_pred_label_pp, dim=0).unsqueeze(0)
+                
+                group_cost = GroupCost()
+                coatt_hm_pred_pp_sample = self.generate_coatt_hm_from_level(coatt_level_pred_label_pp, gaze_hm_pred)
+                # ret_metrics = group_cost.compute(coatt_level_pred_label_pp, coatt_levels_gt, coatt_hm_pred, coatt_hm_gt)
+                ret_metrics = group_cost.compute(coatt_level_pred_label_pp, coatt_levels_gt, coatt_hm_pred_pp_sample, coatt_hm_gt)
+                self.log(f"metric/test/coatt_cost_iou_pp_{dist_thr}", ret_metrics['Group_IoU'], batch_size=1, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+                self.log(f"metric/test/coatt_cost_dist_pp_{dist_thr}", ret_metrics['Group_Dist'], batch_size=1, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
 
             # >>>>>>>>> grouping metrics based on group-wise estimation <<<<<<<<<<
-            # coatt_level_thresh_list = [round(0.1 * i, 1) for i in range(1, 10, 2)]
-            coatt_level_thresh_list = [0.3, 0.5, 0.7]
+            coatt_level_thresh_list = [round(0.1 * i, 1) for i in range(1, 10, 2)]
+            coatt_level_thresh_list += [0.05]
             for co_lev_thr in coatt_level_thresh_list:
                 coatt_level_pred_label = (torch.sigmoid(coatt_level_pred)>co_lev_thr).int()
-                for grp_iou_thr in group_iou_thresh_list:
-                    group_ap = GroupAP(iou_thresh=grp_iou_thr)
-
-                    ret_metrics = group_ap.compute(coatt_level_pred_label, coatt_levels_gt, coatt_hm_pred, coatt_hm_gt)
-                    npos =  ret_metrics['npos']
-                    if npos>0:
-                        self.log(f"metric/test/coatt_ap_sim_grp_{co_lev_thr}_{grp_iou_thr}", ret_metrics['ap'], batch_size=1, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
-                    npos_dist =  ret_metrics['npos_dist']
-                    if npos_dist>0:
-                        self.log(f"metric/test/coatt_ap_sim_grp_{co_lev_thr}_{grp_iou_thr}_dist", ret_metrics['dist'], batch_size=1, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+                group_cost = GroupCost()
+                ret_metrics = group_cost.compute(coatt_level_pred_label, coatt_levels_gt, coatt_hm_pred, coatt_hm_gt)
+                self.log(f"metric/test/coatt_cost_iou_grp_{co_lev_thr}", ret_metrics['Group_IoU'], batch_size=1, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+                self.log(f"metric/test/coatt_cost_dist_grp_{co_lev_thr}", ret_metrics['Group_Dist'], batch_size=1, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
 
         pair_indices = torch.tensor(list(itertools.permutations(torch.arange(num_people), 2)))
         # Update LAEO metrics
@@ -742,7 +764,6 @@ class InteractModel(pl.LightningModule):
             if laeo_mask.sum()>0:
                 self.test_laeo_auc(laeo_pred_argmax, laeo_gt)
                 self.test_laeo_ap(laeo_pred_argmax, laeo_gt)
-
                 self.log("metric/test/laeo_auc", self.test_laeo_auc, batch_size=laeo_mask.sum(), prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
                 self.log("metric/test/laeo_ap", self.test_laeo_ap, batch_size=laeo_mask.sum(), prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
         
@@ -787,6 +808,8 @@ class InteractModel(pl.LightningModule):
                   "gp_gt": batch["gaze_pts"][:,middle_frame_idx,:, :],
                   "gv_pred": gaze_vec_pred, 
                   "gv_gt": batch["gaze_vecs"][:,middle_frame_idx,:, :],
+                  "gaze_pts_pred" : gaze_pt_pred,
+                  "gaze_pts_gt" : batch["gaze_pts"][:,middle_frame_idx,:, :],
                 #   # optionally save gaze heatmaps
                   "hm_pred": gaze_hm_pred,
                 #   "hm_gt": batch["gaze_heatmaps"][:,middle_frame_idx,:,:,:],
@@ -795,7 +818,9 @@ class InteractModel(pl.LightningModule):
                   "inout_pred": inout_pred,
                   "coatt_pred": coatt_pred,
                   "coatt_hm_pred": coatt_hm_pred,
+                  "coatt_hm_gt": coatt_hm_gt,
                   "coatt_level_pred": coatt_level_pred,
+                  "coatt_level_pred_label_pairs": coatt_level_pred_label_pairs,
                   "coatt_level_gt": batch['coatt_levels'][:,middle_frame_idx,:,:],
                   "laeo_pred": laeo_pred,
                   "lah_pred": lah_pred,
@@ -809,6 +834,134 @@ class InteractModel(pl.LightningModule):
                   "num_valid_people": batch['num_valid_people']}
         self.test_step_outputs.append(output)
 
+    def edge_base_grp_detection(self, coatt_pred: torch.Tensor, coatt_level_gt: torch.Tensor, inout_pred: torch.Tensor, res: float) -> torch.Tensor:
+        num_people = coatt_level_gt.shape[-1]
+        indices = torch.tensor(list(itertools.permutations(torch.arange(num_people), 2)))
+
+        edges = []
+        for ind in range(indices.shape[0]):
+            i, j = indices[ind]
+            i_inout_pred, j_inout_pred = inout_pred[0, i], inout_pred[0, j]
+            weight = coatt_pred[0, ind].item()
+            edges.append((i.item(), j.item(), {'weight': weight}))
+        G = nx.Graph()
+        G.add_edges_from(edges)
+        partition = community.best_partition(G, weight='weight', resolution=res)
+        group_ids = list(set(partition.values()))
+
+        coatt_level_pred = []
+        for g_id in group_ids:
+            members = [node for node, comm_id in partition.items() if comm_id == g_id]
+            if len(members)>1:
+                coatt_level_pred_grp = torch.zeros(num_people, device=coatt_level_gt.device)
+                coatt_level_pred_grp[members] = 1
+                coatt_level_pred.append(coatt_level_pred_grp)
+
+        if len(coatt_level_pred)==0:
+            coatt_level_pred = torch.zeros((1, num_people), device=coatt_level_gt.device)
+        else:
+            coatt_level_pred = torch.stack(coatt_level_pred, dim=0)
+
+        return coatt_level_pred
+
+    def post_process_coatt_pred(self, gaze_pts_pred: list, inout_pred: list, dist_thr: float) -> list:
+        coatt_level_pred = []
+        inout_thr = 0.5
+        for idx in range(len(gaze_pts_pred)):
+            gaze_pt_pred = gaze_pts_pred[idx][0]
+            inout_pred_b = inout_pred[idx][0]
+            out_mask = inout_pred_b < inout_thr
+
+            grp_pis = set()
+            num_people = gaze_pt_pred.shape[0]
+            coatt_level_pred_sample = []
+            for pi in range(num_people):
+                if pi in grp_pis:
+                    continue
+                gaze_pt_pred_p = gaze_pt_pred[pi]
+                dists_xy = gaze_pt_pred - gaze_pt_pred_p
+                dists = torch.norm(dists_xy, dim=-1)
+                dists[out_mask] = float('inf')
+                close_indices = torch.where((dists<dist_thr).int())[0]
+                if len(close_indices)>1:
+                    coatt_level_pred_grp = torch.zeros((num_people), device=gaze_pt_pred.device)
+                    coatt_level_pred_grp[close_indices] = 1
+                    coatt_level_pred_sample.append(coatt_level_pred_grp)
+                    grp_pis = grp_pis | set(close_indices.tolist())
+            
+            if len(coatt_level_pred_sample)==0:
+                coatt_level_pred_sample = torch.zeros((1, 1, num_people), device=gaze_pt_pred.device)
+            else:
+                coatt_level_pred_sample = torch.stack(coatt_level_pred_sample, dim=0).unsqueeze(0)
+            
+            coatt_level_pred.append(coatt_level_pred_sample)
+
+        return coatt_level_pred
+    
+    # combine heatmaps of each person attention based on group prediction
+    def generate_coatt_hm_from_level(self, coatt_level_pred: torch.Tensor, hm_pred: torch.Tensor) -> torch.Tensor:
+        people_num = hm_pred.shape[1]
+        img_h, img_w = hm_pred.shape[2], hm_pred.shape[3]
+        coatt_level_pred = coatt_level_pred.view(-1, people_num, 1, 1)
+        coatt_hm_pred = torch.sum(hm_pred * coatt_level_pred, dim=1)
+        coatt_hm_pred = coatt_hm_pred.view(1, -1, img_h, img_w)
+
+        return coatt_hm_pred
+
+    def calc_group_ap(self):
+        coatt_level_gt = [output['coatt_level_gt'] for output in self.test_step_outputs]
+        coatt_hm_pred = [output['coatt_hm_pred'] for output in self.test_step_outputs]
+        coatt_hm_gt = [output['coatt_hm_gt'] for output in self.test_step_outputs]
+        inout_pred = [torch.sigmoid(output['inout_pred']) for output in self.test_step_outputs]
+        coatt_pred = [output['coatt_pred'] for output in self.test_step_outputs]
+        hm_pred = [output['hm_pred'] for output in self.test_step_outputs]
+
+        # thresholds for group-level prediction
+        coatt_level_thresh_list = [round(0.1 * i, 1) for i in range(1, 10, 2)]
+
+        # thresholds for edge-based group detection
+        edge_res_list = [round(0.1 * i, 1) for i in range(0, 10, 2)]
+
+        # thresholds for post-processing
+        hm_dist_thr_list = [0.05, 0.1, 0.15, 0.2]
+
+        # evaluation by varying different group IoU thresholds
+        group_iou_thresh_list = [0.5, 0.75, 1.0]
+        for group_iou_thresh in group_iou_thresh_list:
+            group_ap = GroupAP(iou_thresh=group_iou_thresh)
+
+            # evaluation by using our group-level prediction
+            for co_lev_thr in coatt_level_thresh_list:
+                coatt_level_pred = [(torch.sigmoid(output['coatt_level_pred'])>co_lev_thr).int() for output in self.test_step_outputs]
+                ret_metrics = group_ap.compute(coatt_level_pred, coatt_level_gt, coatt_hm_pred, coatt_hm_gt)
+                self.log(f"metric/test/coatt_ap_grp_{group_iou_thresh}_{co_lev_thr}", ret_metrics['ap'], batch_size=1, prog_bar=True, on_step=False, on_epoch=True)
+                self.log(f"metric/test/coatt_dist_grp_{group_iou_thresh}_{co_lev_thr}", ret_metrics['dist'], batch_size=1, prog_bar=True, on_step=False, on_epoch=True)
+            
+            # evaluation by using edge-based group detection
+            for res in edge_res_list:
+                coatt_level_pred_pairs = []
+                coatt_hm_pred_pairs = []
+                for idx in range(len(coatt_pred)):
+                    coatt_level_pred_pairs_sample = self.edge_base_grp_detection(coatt_pred[idx], coatt_level_gt[idx], inout_pred[idx], res)
+                    coatt_level_pred_pairs.append(coatt_level_pred_pairs_sample)
+                    coatt_hm_pred_pairs_sample = self.generate_coatt_hm_from_level(coatt_level_pred_pairs[idx], hm_pred[idx])
+                    coatt_hm_pred_pairs.append(coatt_hm_pred_pairs_sample)
+                ret_metrics = group_ap.compute(coatt_level_pred_pairs, coatt_level_gt, coatt_hm_pred_pairs, coatt_hm_gt)
+                self.log(f"metric/test/coatt_ap_pairs_{group_iou_thresh}_{res}", ret_metrics['ap'], batch_size=1, prog_bar=True, on_step=False, on_epoch=True)
+                self.log(f"metric/test/coatt_dist_pairs_{group_iou_thresh}_{res}", ret_metrics['dist'], batch_size=1, prog_bar=True, on_step=False, on_epoch=True)
+
+            # evaluation by using post-processing
+            for dist_thr in hm_dist_thr_list:
+                gaze_pts_pred = [output['gaze_pts_pred'] for output in self.test_step_outputs]
+                coatt_level_pred_pp = self.post_process_coatt_pred(gaze_pts_pred, inout_pred, dist_thr)
+                coatt_hm_pred_pp = []
+                for idx in range(len(coatt_level_pred_pp)):
+                    coatt_hm_pred_pp_sample = self.generate_coatt_hm_from_level(coatt_level_pred_pp[idx], hm_pred[idx])
+                    coatt_hm_pred_pp.append(coatt_hm_pred_pp_sample)
+                ret_metrics = group_ap.compute(coatt_level_pred_pp, coatt_level_gt, coatt_hm_pred_pp, coatt_hm_gt)
+                self.log(f"metric/test/coatt_ap_pp_{group_iou_thresh}_{dist_thr}", ret_metrics['ap'], batch_size=1, prog_bar=True, on_step=False, on_epoch=True)
+                self.log(f"metric/test/coatt_dist_pp_{group_iou_thresh}_{dist_thr}", ret_metrics['dist'], batch_size=1, prog_bar=True, on_step=False, on_epoch=True)
+
     def on_test_epoch_end(self):
         # Reset metrics
         self.metrics["test_dist"].reset()
@@ -817,6 +970,9 @@ class InteractModel(pl.LightningModule):
         save_dir = os.path.join(os.path.dirname(self.cfg.test.checkpoint), self.cfg.experiment.dataset)
         if not os.path.exists(save_dir):
             os.makedirs(save_dir, exist_ok=True)
+
+        # Compute mAP
+        self.calc_group_ap()
 
         # Save test predictions
         self._save_predictions(self.test_step_outputs, save_dir)
@@ -845,6 +1001,7 @@ class InteractModel(pl.LightningModule):
 #                                                 SHARINGAN MODEL                                                  #
 # ==================================================================================================================
 class SharinganModel(pl.LightningModule):
+
     def __init__(self, cfg):
         super().__init__()
 

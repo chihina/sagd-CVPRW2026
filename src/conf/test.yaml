@@ -15,12 +15,12 @@ experiment:
     group: null # /!\
     task: test # combination of {train, val, test, predict} separated by '+' sign. TODO: train+predict # /!\
     # dataset: combined_social # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
-    dataset: videocoatt # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
+    # dataset: videocoatt # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
     # dataset: childplay # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
-    # dataset: videoattentiontarget # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
+    dataset: videoattentiontarget # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
     # dataset: uco_laeo # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
     path: ${hydra:runtime.cwd} # to retrieve logs and checkpoints
-    cuda: 1
+    cuda: 6
 
 # ------------------------------------------------------------------------------------------------------------------- #
 
@@ -87,8 +87,8 @@ model:
     # coatt_hm_type: hm # {coef, hm, coef_iter}
     # coatt_hm_type: coef # {coef, hm, coef_iter}
     coatt_hm_type: coef_iter # {coef, hm, coef_iter}
-    coatt_coef_iter_cnt: 1
-    # coatt_coef_iter_cnt: 4
+    # coatt_coef_iter_cnt: 1
+    coatt_coef_iter_cnt: 3
     coatt_coatt_layer: self
     coatt_person_layer: sep
     weights: False # {False, path to weights}
@@ -145,8 +145,6 @@ val:
 # ------------------------------------------------------------------------------------------------------------------- #
 
 test:
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-16/14-05-08_COA_True_SOC_False/best.ckpt"
-
     # [iter=1]
     # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-24/11-42-44_COA_True_SOC_False/best.ckpt"
     # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-24/11-42-44_COA_True_SOC_False/last.ckpt"
@@ -158,7 +156,21 @@ test:
     # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-26/10-24-24_COA_False_SOC_True/last.ckpt"
 
     # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-26/10-24-42_COA_True_SOC_True/best.ckpt"
-    checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-26/10-24-42_COA_True_SOC_True/last.ckpt"
+    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-26/10-24-42_COA_True_SOC_True/last.ckpt"
+
+    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-11-12/10-18-13_COA_True_SOC_True_coatt_hm_coef/best.ckpt"
+    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-11-12/10-24-22_COA_False_SOC_True_coatt_hm_coef/best.ckpt"
+
+    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-11-13/13-49-02_COA_True_SOC_True_coatt_hm_coef_iter/best.ckpt"
+    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-11-13/13-49-02_COA_True_SOC_True_coatt_hm_coef_iter/last.ckpt"
+
+    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-11-13/22-25-17_COA_True_SOC_True_coatt_hm_coef/best.ckpt"
+    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-11-13/22-25-17_COA_True_SOC_True_coatt_hm_coef/last.ckpt"
+
+    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-11-15/09-24-55_COA_True_SOC_True_coatt_hm_coef_iter/best.ckpt"
+    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-11-15/09-24-55_COA_True_SOC_True_coatt_hm_coef_iter/last.ckpt"
+
+    checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-11-17/11-31-47_COA_True_SOC_True_coatt_hm_coef_iter_3/last.ckpt"
 
     batch_size: 1 # /!\
     device: ${train.device}

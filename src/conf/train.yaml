@@ -20,7 +20,8 @@ experiment:
     # dataset: childplay # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
     # dataset: uco_laeo # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
     path: ${hydra:runtime.cwd} # to retrieve logs and checkpoints
-    cuda: 3
+    cuda: 2
+    exp_id: init
 
 # ------------------------------------------------------------------------------------------------------------------- #
 
@@ -91,7 +92,7 @@ model:
     # coatt_hm_type: hm # {coef, hm, coef_iter}
     # coatt_hm_type: coef # {coef, hm, coef_iter}
     coatt_hm_type: coef_iter # {coef, hm, coef_iter}
-    coatt_coef_iter_cnt: 1
+    coatt_coef_iter_cnt: 3
     weights: False # {False, path to weights}
 
 # ------------------------------------------------------------------------------------------------------------------- #

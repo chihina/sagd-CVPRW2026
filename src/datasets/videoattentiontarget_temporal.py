@@ -585,9 +585,9 @@ class VideoAttentionTargetDataset_temporal(Dataset):
     def __len__(self):
         # return len(self.paths)
         
-        # self.use_ratio = 0.03
+        self.use_ratio = 0.03
         # self.use_ratio = 0.1
-        self.use_ratio = 1.0
+        # self.use_ratio = 1.0
         return int(len(self.paths) * self.use_ratio)
 
     

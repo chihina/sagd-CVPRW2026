@@ -223,3 +223,4 @@ src/networks/.ipynb_checkpoints
 src/ops/__pycache__
 src/ops/.ipynb_checkpoints
 src/weights
+analysis/excel

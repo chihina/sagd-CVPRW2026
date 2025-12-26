@@ -200,7 +200,7 @@ def visualize_coatt(frame, batch):
     elif batch['dataset'][0]=='childplay':
         coatt_level_thresh = 0.2
     elif batch['dataset'][0]=='coatt':
-        coatt_level_thresh = 0.7
+        coatt_level_thresh = 0.3
     else:
         coatt_level_thresh = 0.2
 
@@ -429,11 +429,12 @@ if __name__=='__main__':
 
     # model_dir = "combined_social/2025-10-22/13-58-05_COA_True_SOC_False"
     # model_dir = "combined_social/2025-10-16/14-05-08_COA_True_SOC_False"
-    model_dir = "combined_social/2025-10-26/10-24-42_COA_True_SOC_True"
+    # model_dir = "combined_social/2025-11-15/09-24-55_COA_True_SOC_True_coatt_hm_coef_iter"
+    model_dir = "combined_social/2025-11-17/11-31-47_COA_True_SOC_True_coatt_hm_coef_iter_3"
 
-    # dataset_name = 'videocoatt'
+    dataset_name = 'videocoatt'
     # dataset_name = 'childplay'
-    dataset_name = 'videoattentiontarget'
+    # dataset_name = 'videoattentiontarget'
     # dataset_name = 'uco_laeo'
     results_name = 'test-predictions.pickle'
     results_path = os.path.join(checkpoints_dir, model_dir, dataset_name, results_name)
