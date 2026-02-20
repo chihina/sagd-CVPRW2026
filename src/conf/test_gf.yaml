@@ -16,7 +16,7 @@ experiment:
     task: test # combination of {train, val, test, predict} separated by '+' sign. TODO: train+predict # /!\
     dataset: gazefollow # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
     path: ${hydra:runtime.cwd} # to retrieve logs and checkpoints
-    cuda: 3
+    cuda: 4
 
 # ------------------------------------------------------------------------------------------------------------------- #
 

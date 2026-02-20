@@ -258,7 +258,8 @@ class VacationDataModule(pl.LightningDataModule):
                         hue=None,
                         p=0.8,
                     ),
-                    Resize(img_size=(224, 224), head_size=(224, 224)),
+                    # Resize(img_size=(224, 224), head_size=(224, 224)),
+                    Resize(img_size=(self.cfg.data.image_size, self.cfg.data.image_size), head_size=(self.cfg.data.image_size, self.cfg.data.image_size)),
                     ToTensor(),
                     Normalize(
                         img_mean=[0.31072, 0.25703, 0.24182],
@@ -279,7 +280,8 @@ class VacationDataModule(pl.LightningDataModule):
 
             val_transform = Compose(
                 [
-                    Resize(img_size=(224, 224), head_size=(224, 224)),
+                    # Resize(img_size=(224, 224), head_size=(224, 224)),
+                    Resize(img_size=(self.cfg.data.image_size, self.cfg.data.image_size), head_size=(self.cfg.data.image_size, self.cfg.data.image_size)),
                     ToTensor(),
                     Normalize(
                         img_mean=[0.31072, 0.25703, 0.24182],
@@ -301,7 +303,8 @@ class VacationDataModule(pl.LightningDataModule):
         elif stage == "validate":
             val_transform = Compose(
                 [
-                    Resize(img_size=(224, 224), head_size=(224, 224)),
+                    # Resize(img_size=(224, 224), head_size=(224, 224)),
+                    Resize(img_size=(self.cfg.data.image_size, self.cfg.data.image_size), head_size=(self.cfg.data.image_size, self.cfg.data.image_size)),
                     ToTensor(),
                     Normalize(
                         img_mean=[0.31072, 0.25703, 0.24182],
@@ -323,7 +326,8 @@ class VacationDataModule(pl.LightningDataModule):
         elif stage == "test":
             test_transform = Compose(
                 [
-                    Resize(img_size=(224, 224), head_size=(224, 224)),
+                    # Resize(img_size=(224, 224), head_size=(224, 224)),
+                    Resize(img_size=(self.cfg.data.image_size, self.cfg.data.image_size), head_size=(self.cfg.data.image_size, self.cfg.data.image_size)),
                     ToTensor(),
                     Normalize(
                         img_mean=[0.31072, 0.25703, 0.24182],
@@ -346,7 +350,8 @@ class VacationDataModule(pl.LightningDataModule):
         elif stage == "predict":
             predict_transform = Compose(
                 [
-                    Resize(img_size=(224, 224), head_size=(224, 224)),
+                    # Resize(img_size=(224, 224), head_size=(224, 224)),
+                    Resize(img_size=(self.cfg.data.image_size, self.cfg.data.image_size), head_size=(self.cfg.data.image_size, self.cfg.data.image_size)),
                     ToTensor(),
                     Normalize(
                         img_mean=[0.31072, 0.25703, 0.24182],

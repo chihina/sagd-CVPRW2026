@@ -136,17 +136,26 @@ class InteractNet(nn.Module):
         else:
             self.coatt_coatt_interaction = nn.Identity()
 
-        # coatt-person layers
-        if self.cfg.model.coatt_person_layer=='sep':
-            self.people_coatt_layers = 2
-            self.people_coatt_interaction = nn.Sequential(*[
-                CoattTransformerDecoderBlock(dim=self.coatt_dim, num_heads=8, mlp_ratio=0.25)
-                for i in range(self.people_coatt_layers)
-            ])
-        elif self.cfg.model.coatt_person_layer=='mix':
-            self.people_coatt_interaction = nn.Sequential(*[
-                TransformerBlock(dim=self.coatt_dim, num_heads=8, mlp_ratio=0.25)
-                for i in range(len(self.interaction_indexes))
+        # projection layer for person tokens with gaze point
+        if self.cfg.model.interact.person_token_type == 'w_gaze_vec':
+            self.person_tokens_proj_gaze_vec = nn.Linear(self.coatt_dim + 2, self.coatt_dim)
+        elif self.cfg.model.interact.person_token_type == 'w_gaze_vec_inout':
+            self.person_tokens_proj_gaze_vec_inout = nn.Linear(self.coatt_dim + 3, self.coatt_dim)
+
+        # people-coatt layers
+        self.people_coatt_layers = 2
+        self.people_coatt_interaction = nn.Sequential(*[
+            CoattTransformerDecoderBlock(dim=self.coatt_dim, num_heads=8, mlp_ratio=0.25)
+            for i in range(self.people_coatt_layers)
+        ])
+
+        # image-coatt layers
+        self.image_coatt_layers = 2
+        if self.cfg.model.coatt_image_layer=='sep':
+            self.image_proj_for_coatt = nn.Linear(token_dim, self.coatt_dim)
+            self.image_coatt_interaction = nn.Sequential(*[
+                CoAttCrossAttention(dim=self.coatt_dim, num_heads=8)
+                for i in range(self.image_coatt_layers)
             ])
         
         self.coatt_token_ffn = nn.Sequential(
@@ -330,11 +339,11 @@ class InteractNet(nn.Module):
         if self.cfg.model.interact.person_token_type == 'normal':
             person_tokens_coatt = person_tokens.view(b*t, n, self.coatt_dim)  # (b*t, n, D)
         elif self.cfg.model.interact.person_token_type == 'w_gaze_vec':
-            # person_tokens_coatt = torch.cat([person_tokens, gaze_pt_pred], dim=-1)  # (b*t, n, D+2)
-            gaze_pt_pred_x = gaze_pt_pred[:,:,0:1].view(b*t, n, 1).expand(-1,-1,self.coatt_dim//2)
-            gaze_pt_pred_y = gaze_pt_pred[:,:,1:2].view(b*t, n, 1).expand(-1,-1,self.coatt_dim//2)
-            gaze_pt_pred_xy = torch.cat([gaze_pt_pred_x, gaze_pt_pred_y], dim=-1)  # (b*t, n, D)
-            person_tokens_coatt = person_tokens + gaze_pt_pred_xy
+            person_tokens_coatt = torch.cat([person_tokens, gaze_pt_pred], dim=-1)  # (b*t, n, D+2)
+            person_tokens_coatt = self.person_tokens_proj_gaze_vec(person_tokens_coatt)  # (b*t, n, D)
+        elif self.cfg.model.interact.person_token_type == 'w_gaze_vec_inout':
+            person_tokens_coatt = torch.cat([person_tokens, gaze_pt_pred, inout.view(b*t, n, 1)], dim=-1)  # (b*t, n, D+3)
+            person_tokens_coatt = self.person_tokens_proj_gaze_vec_inout(person_tokens_coatt)  # (b*t, n, D)
 
         # coatt-coatt interaction
         for i in range(self.coatt_coatt_layers):
@@ -351,6 +360,14 @@ class InteractNet(nn.Module):
             coatt_tokens = coatt_person_tokens[:, :self.num_coatt, :]  # (b*t, coatt_num, D)
             person_tokens_coatt = coatt_person_tokens[:, self.num_coatt:, :]  # (b*t, n, D)
         
+        # coatt as queries, image tokens as keys and values
+        if self.cfg.model.coatt_image_layer=='sep':
+            for i in range(self.image_coatt_layers):
+                img_tokens_proj = self.image_proj_for_coatt(img_layers[-1])  # (b*t, num_tokens, coatt_dim)
+                coatt_tokens = self.image_coatt_interaction[i](coatt_tokens, img_tokens_proj)
+        else:
+            pass
+
         coatt_tokens_emb = self.coatt_token_ffn(coatt_tokens)
         person_tokens_coatt_emb = self.person_tokens_ffn(person_tokens_coatt)
 
@@ -359,15 +376,18 @@ class InteractNet(nn.Module):
 
         # Predict Coatt Heatmap by multiplying coatt_level and gaze_hm
         coatt_level_all = [coatt_level]
+        coatt_hm_all = []
         if self.output=='heatmap':
             if 'coef' in self.cfg.model.coatt_hm_type:
                 gaze_hm_view = gaze_hm.view(b, t, 1, n, hm_height, hm_width)
                 inout_view = inout.view(b, t, 1, n, 1, 1)
                 coatt_level_w_prob_view = coatt_level_w_prob.view(b, t, self.num_coatt, n, 1, 1)
                 coatt_hm = coatt_level_w_prob_view * gaze_hm_view  # (b, t, coatt_num, n, hm_height, hm_width)
+
                 coatt_hm = coatt_hm.mean(dim=3)  # average over people dimension
+                coatt_hm_all.append(coatt_hm)
                 if self.cfg.model.coatt_hm_type == 'coef_iter':
-                    for iter in range(self.cfg.model.coatt_coef_iter_cnt):
+                    for iteration in range(self.cfg.model.coatt_coef_iter_cnt):
                         # apply soft-argmax to get coatt points
                         coatt_hm_pt = spatial_argmax2d(coatt_hm.reshape(b*t*self.num_coatt, hm_height, hm_width), normalize=True)
                         coatt_hm_pt = coatt_hm_pt.view(b*t, self.num_coatt, 2)
@@ -375,16 +395,17 @@ class InteractNet(nn.Module):
                         # apply iterations of coatt-coatt layers
                         coatt_tokens_pt = torch.cat([coatt_tokens_emb, coatt_hm_pt], dim=-1)  # (b*t*coatt_num, D+2)
                         for i in range(self.coatt_coatt_layers_iter):
-                            coatt_tokens_pt = self.coatt_coatt_interaction_iter_all[iter][i](coatt_tokens_pt)
+                            coatt_tokens_pt = self.coatt_coatt_interaction_iter_all[iteration][i](coatt_tokens_pt)
                         
                         # predict coatt_hm again
-                        coatt_tokens_pt_emb = self.coatt_token_ffn_iter_all[iter](coatt_tokens_pt)
+                        coatt_tokens_pt_emb = self.coatt_token_ffn_iter_all[iteration](coatt_tokens_pt)
                         coatt_level_iter = torch.einsum('btd,bnd->btn', coatt_tokens_pt_emb, person_tokens_coatt_emb)
                         coatt_level_iter_w_prob = torch.sigmoid(coatt_level_iter)
                         coatt_level_iter_w_prob_view = coatt_level_iter_w_prob.view(b, t, self.num_coatt, n, 1, 1)
                         coatt_hm = coatt_level_iter_w_prob_view * gaze_hm_view  # (b, t, coatt_num, n, hm_height, hm_width)
                         coatt_hm = coatt_hm.mean(dim=3)  # average over people dimension
                         coatt_level_all.append(coatt_level_iter)
+                        coatt_hm_all.append(coatt_hm)
             
             elif self.cfg.model.coatt_hm_type == 'hm':
                 '''
@@ -403,6 +424,7 @@ class InteractNet(nn.Module):
                 coatt_hm = coatt_hm.view(b, t, self.num_coatt, hm_height, hm_width)
                 coatt_pt_pred = spatial_argmax2d(coatt_hm.reshape(b*t*self.num_coatt, hm_height, hm_width), normalize=True)
                 coatt_pt_pred = gaze_pt_pred.view(b*t, n, 2)
+                coatt_hm_all.append(coatt_hm)
             else:
                 assert False, 'Incorrect coatt_hm_type selected!!!'
 
@@ -426,8 +448,11 @@ class InteractNet(nn.Module):
             corr_idx = torch.where((indices==pair[[1,0]]).prod(-1))[0].item()
             laeo[:, pi] = torch.min(lah[:, pi],lah[:, corr_idx])
 
-        coatt_level_all = torch.stack(coatt_level_all, dim=0)  # (num_iters, b, t, coatt_num, n)
-        coatt_level_all_mean = coatt_level_all.mean(dim=0).view(b, t, self.num_coatt, n)
+        # average over iterations
+        coatt_level_all = torch.stack(coatt_level_all, dim=0)  # (num_iters, b*t, coatt_num, n)
+        coatt_level_all = coatt_level_all.view(coatt_level_all.shape[0], b, t, self.num_coatt, n)
+        coatt_hm_all = torch.stack(coatt_hm_all, dim=0)  # (num_iters, b, t, coatt_num, hm_height, hm_width)
+        coatt_hm_all = coatt_hm_all.view(coatt_hm_all.shape[0], b, t, self.num_coatt, hm_height, hm_width)
 
         if self.output=='heatmap':
             # return _, gaze_vec, gaze_hm, inout.view(b, t, n), lah.view(b, t, num_pairs), laeo.view(b, t, num_pairs), coatt.view(b, t, num_pairs), coatt_hm
@@ -438,9 +463,12 @@ class InteractNet(nn.Module):
             out['lah'] = lah.view(b, t, num_pairs)
             out['laeo'] = laeo.view(b, t, num_pairs)
             out['coatt'] = coatt.view(b, t, num_pairs)
-            out['coatt_hm'] = coatt_hm
+            # out['coatt_hm'] = coatt_hm
             # out['coatt_level'] = coatt_level.view(b, t, self.num_coatt, n)
-            out['coatt_level'] = coatt_level_all_mean
+            # out['coatt_level'] = coatt_level_all_mean
+
+            out['coatt_level_all'] = coatt_level_all
+            out['coatt_hm_all'] = coatt_hm_all
 
             out['person_tokens'] = person_tokens.view(b, t, n, -1)
 

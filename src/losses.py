@@ -89,6 +89,28 @@ def compute_social_loss(lah_pred, lah_gt, lah_mask, laeo_pred, laeo_gt, laeo_mas
 
     return total_loss, logs
 
+def compute_gazelle_loss(gaze_hm_gt, inout_gt, gaze_hm_pred, inout_pred, dataset=None, epoch=None):
+    heatmap_loss = torch.tensor(0.0).to(gaze_hm_pred.device)
+    inout_loss = torch.tensor(0.0).to(gaze_hm_pred.device)
+    
+    mask = (inout_gt==1)
+    if torch.sum(mask) > 0:  # to avoid case where all samples of the batch are outside (i.e. division by 0)
+        heatmap_loss = compute_heatmap_loss(gaze_hm_pred, gaze_hm_gt, mask, dataset)
+    
+    mask = (inout_gt!=-1)
+    if torch.sum(mask) > 0:
+        inout_loss = compute_inout_loss(inout_pred, inout_gt, mask)
+    
+    total_loss = heatmap_loss + inout_loss    # for Gaze-LLE
+
+    logs = {
+        "heatmap_loss": heatmap_loss.item(),
+        "inout_loss": inout_loss.item(),
+        "total_loss": total_loss.item(),
+    }
+
+    return total_loss, logs
+
 def compute_interact_loss(gaze_vec_gt, gaze_hm_gt, inout_gt, gaze_vec_pred, gaze_hm_pred, inout_pred, dataset=None, epoch=None):
     heatmap_loss = torch.tensor(0.0).to(gaze_hm_pred.device)
     angular_loss = torch.tensor(0.0).to(gaze_hm_pred.device)
@@ -117,27 +139,57 @@ def compute_interact_loss(gaze_vec_gt, gaze_hm_gt, inout_gt, gaze_vec_pred, gaze
 
     return total_loss, logs
 
-def compute_coatt_loss(coatt_hm_gt, coatt_hm_pred, coatt_level_gt, coatt_level_pred, person_tokens):
+
+def compute_coatt_loss(coatt_hm_gt, coatt_hm_pred, coatt_level_gt, coatt_level_pred, person_tokens, cfg):
     if len(coatt_hm_gt.shape) == 4:  # if the input is a single frame
         b, coatt_num, h, w = coatt_hm_gt.shape
         t = 1
     elif len(coatt_hm_gt.shape) == 5:  # if the input is a sequence of frames
         b, t, coatt_num, h, w = coatt_hm_gt.shape
 
+    # get number of iterations for coatt heatmap and level predictions 
+    iter_num = coatt_hm_pred.shape[0]
+
     # compute cost matrix for coatt heatmaps
     coatt_hm_gt = coatt_hm_gt.view(b*t, coatt_num, h*w)
-    coatt_hm_pred = coatt_hm_pred.view(b*t, coatt_num, h*w)
-    cost_matrix_hm = torch.cdist(coatt_hm_gt, coatt_hm_pred, p=2)
-    # print('cost_matrix_hm', cost_matrix_hm.shape)
+    # coatt_hm_pred = coatt_hm_pred.view(b*t, coatt_num, h*w)
+    # cost_matrix_hm = torch.cdist(coatt_hm_gt, coatt_hm_pred, p=2)
+    cost_matrix_hm_all = []
+    for iter_idx in range(iter_num):
+        coatt_hm_pred_iter = coatt_hm_pred[iter_idx]
+        coatt_hm_pred_iter = coatt_hm_pred_iter.view(b*t, coatt_num, h*w)
+        cost_matrix_hm_iter = torch.cdist(coatt_hm_gt, coatt_hm_pred_iter, p=2)
+        cost_matrix_hm_all.append(cost_matrix_hm_iter.unsqueeze(0))
+    cost_matrix_hm = torch.mean(torch.cat(cost_matrix_hm_all, dim=0), dim=0)
 
     # compute cost matrix for coatt binary classification (bce loss, b*t, coatt_num, coatt_num)
     coatt_level_gt = coatt_level_gt.view(b*t, coatt_num, -1)  # (b*t, coatt_num, people_num)
-    coatt_level_pred = coatt_level_pred.view(b*t, coatt_num, -1)  # (b*t, coatt_num, people_num)
     coatt_level_gt_expand = coatt_level_gt.unsqueeze(2).expand(-1, -1, coatt_level_gt.shape[1], -1).float()  # (b*t, coatt_num, coatt_num, people_num)
-    coatt_level_pred_expand = coatt_level_pred.unsqueeze(1).expand(-1, coatt_level_pred.shape[1], -1, -1)  # (b*t, coatt_num, coatt_num, people_num)
-    bce_loss = F.binary_cross_entropy_with_logits(coatt_level_pred_expand, coatt_level_gt_expand, reduction="none")
-    cost_matrix_level = bce_loss.mean(dim=-1)  # average over people_num dimension
-    # print('cost_matrix_level', cost_matrix_level.shape)
+    # coatt_level_pred = coatt_level_pred.view(b*t, coatt_num, -1)  # (b*t, coatt_num, people_num)
+    # coatt_level_pred_expand = coatt_level_pred.unsqueeze(1).expand(-1, coatt_level_pred.shape[1], -1, -1)  # (b*t, coatt_num, coatt_num, people_num)
+
+    cost_matrix_level_all = []
+    for iter_idx in range(iter_num):
+        coatt_level_pred_iter = coatt_level_pred[iter_idx]
+        coatt_level_pred_iter = coatt_level_pred_iter.view(b*t, coatt_num, -1)  # (b*t, coatt_num, people_num)
+        coatt_level_pred_expand = coatt_level_pred_iter.unsqueeze(1).expand(-1, coatt_level_pred_iter.shape[1], -1, -1)  # (b*t, coatt_num, coatt_num, people_num)
+
+        bce_loss = F.binary_cross_entropy_with_logits(coatt_level_pred_expand, coatt_level_gt_expand, reduction="none")
+        if cfg.train.level_loss_type == 'focal':
+            # Compute focal loss
+            prob = torch.sigmoid(coatt_level_pred_expand)
+            pt = prob * coatt_level_gt_expand + (1 - prob) * (1 - coatt_level_gt_expand)
+            gamma = 2.0
+            loss = (1 - pt).pow(gamma) * bce_loss
+        elif cfg.train.level_loss_type == 'bce':
+            # Use BCE loss
+            loss = bce_loss
+        else:
+            raise ValueError(f"Unknown level_loss_type: {cfg.train.level_loss_type}")
+        
+        cost_matrix_level = loss.mean(dim=-1)  # average over people_num dimension
+        cost_matrix_level_all.append(cost_matrix_level.unsqueeze(0))
+    cost_matrix_level = torch.mean(torch.cat(cost_matrix_level_all, dim=0), dim=0)
 
     # combine all cost matrices
     cost_matrix = cost_matrix_hm + cost_matrix_level
@@ -156,23 +208,25 @@ def compute_coatt_loss(coatt_hm_gt, coatt_hm_pred, coatt_level_gt, coatt_level_p
 
     # compute a loss function in which person_tokes joining the same group are close in the feature space
     coatt_level_gt = coatt_level_gt.view(b, t, coatt_num, -1)  # (b, t, coatt_num, people_num)
-
+    
+    # compute contrastive loss for person tokens
     temp_param = 0.2
-    con_loss = 0.0
+    eps = 1e-6
+    con_loss = torch.tensor(0.0, device=person_tokens.device)
     for b_idx in range(b):
         for t_idx in range(t):
+            person_tokens_all = person_tokens[b_idx, t_idx]  # (n, token_dim)
+            normed_tokens = F.normalize(person_tokens_all, dim=-1, eps=eps)
+            exp_sim = torch.exp(normed_tokens @ normed_tokens.transpose(0, 1)) / temp_param
+            den = exp_sim.sum(dim=-1)  # (n,)
             for coatt_idx in range(coatt_num):
                 coatt_level_gt_curr = coatt_level_gt[b_idx, t_idx, coatt_idx]  # (people_num,)
                 if torch.sum(coatt_level_gt_curr) <= 1:
                     continue
-                person_tokens_all = person_tokens[b_idx, t_idx]  # (n, token_dim)
-                person_tokens_grp = person_tokens_all[coatt_level_gt_curr==1]  # (num_in_group, token_dim)
-                for person_idx in range(coatt_level_gt_curr.shape[0]):
-                    person_tokens_target = person_tokens[b_idx, t_idx, person_idx]  # (token_dim,)
-                    con_loss_den = torch.sum(torch.exp(torch.cosine_similarity(person_tokens_target.unsqueeze(0), person_tokens_all, dim=-1)) / temp_param).sum()
-                    con_loss_mol = torch.sum(torch.exp(torch.cosine_similarity(person_tokens_target.unsqueeze(0), person_tokens_grp, dim=-1)) / temp_param).sum()
-                    con_loss_curr = - torch.log((con_loss_mol + 1e-6) / (con_loss_den + 1e-6))
-                    con_loss += con_loss_curr
+                group_mask = coatt_level_gt_curr == 1
+                num = exp_sim[:, group_mask].sum(dim=-1)  # (n,)
+                con_loss_curr = -torch.log((num + eps) / (den + eps))
+                con_loss += con_loss_curr.sum()
     con_loss = con_loss / (b * t * coatt_num * coatt_level_gt.shape[-1])
 
     logs = {

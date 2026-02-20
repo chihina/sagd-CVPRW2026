@@ -8,7 +8,7 @@ import random
 import sys
 from glob import glob
 from typing import Dict, List, Tuple, Union
-
+from collections import defaultdict
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
@@ -110,7 +110,8 @@ class VideoAttentionTargetDataset_temporal(Dataset):
         self.stride = stride
         self.jitter_bbox = RandomHeadBboxJitter(p=1.0, tr=tr)
         self.transform = transform
-        self.image_size = image_size
+        # self.image_size = image_size
+        self.image_size = (cfg.data.image_size, cfg.data.image_size) if isinstance(cfg.data.image_size, int) else cfg.data.image_size
         self.heatmap_sigma = heatmap_sigma
         self.heatmap_size = heatmap_size
         self.num_people = num_people
@@ -126,6 +127,49 @@ class VideoAttentionTargetDataset_temporal(Dataset):
         # load speaking status file
         # self.df_speaking = self.load_annotations_speaker()
         # self.df_speaking = self.df_speaking.groupby('path')
+
+        # """
+        # prune train/val set to have only co-attention samples
+        # if self.split in ['train', 'val']:
+        #     paths_pruned_coatt = []
+        #     for path in self.paths:
+        #         img_annotations = self.annotations.get_group(path)
+        #         coatt_pairs = img_annotations['coatt_pairs'].values[0]
+        #         coatt_flag = np.sum(coatt_pairs==1) > 0
+        #         if coatt_flag:
+        #             paths_pruned_coatt.append(path)
+        #     print(f'Pruned {self.split} paths from {len(self.paths)} to {len(paths_pruned_coatt)}')
+        #     self.paths = paths_pruned_coatt
+        # """
+
+        """
+        # prune test set to have only one video per scene
+        if self.split=='test':
+            used_scenes = defaultdict(int)
+            selected_data_names = set()
+            for path in self.paths:
+                scene_tag = path.split('/')[0]
+                video_tag = path.split('/')[1]
+                data_name = f'{scene_tag}_{video_tag}'
+
+                img_annotations = self.annotations.get_group(path)
+                coatt_pairs = img_annotations['coatt_pairs'].values[0]
+                if used_scenes[scene_tag]<3 and not data_name in selected_data_names:
+                # if used_scenes[scene_tag]<1 and not data_name in selected_data_names:
+                    used_scenes[scene_tag] += 1
+                    selected_data_names.add(data_name)
+            
+            # prune paths
+            paths_pruned = []
+            for path in self.paths:
+                scene_tag = path.split('/')[0]
+                video_tag = path.split('/')[1]
+                data_name = f'{scene_tag}_{video_tag}'
+                if data_name in selected_data_names:
+                    paths_pruned.append(path)
+            print(f'Pruned test paths from {len(self.paths)} to {len(paths_pruned)}')
+            self.paths = paths_pruned
+        """
     
     def load_annotations_speaker(self):
         annotation_files = glob(os.path.join('/idiap/temp/agupta/data/attention/videoatttarget/speaker/', f"*/*.csv"))
@@ -246,7 +290,8 @@ class VideoAttentionTargetDataset_temporal(Dataset):
             dummy_sample['image'] = image
             dummy_sample['heads'] = []
             dummy_sample['pcd'] = torch.zeros((3,img_h,img_w), dtype=torch.float32)
-            dummy_sample = Resize(img_size=self.image_size[1], head_size=(224,224))(dummy_sample)
+            # dummy_sample = Resize(img_size=self.image_size[1], head_size=(224,224))(dummy_sample)
+            dummy_sample = Resize(img_size=self.image_size[1], head_size=self.image_size)(dummy_sample)
             self.image_size = dummy_sample['image'].size
         
         # get frame nums around current frame
@@ -314,12 +359,25 @@ class VideoAttentionTargetDataset_temporal(Dataset):
                 "dataset": 'videoattentiontarget'
                 }
         t_sample['pids'] = torch.cat([torch.zeros((batch_num_heads + 1 -len(person_ids), ))-1, torch.from_numpy(person_ids)])
+        
+        # adjust batch_num_heads for test split based on max num people in the clip
+        if self.split=='test':
+            num_people_temporal_max = batch_num_heads
+            for frame_nb in frame_nbs:
+                path = os.path.join(clip,  str(frame_nb).zfill(8)+'.jpg')
+                if path in self.annotations.groups.keys():
+                    img_annotations = self.annotations.get_group(path)
+                    pids_frame = np.arange(len(img_annotations['head_bboxes'].values[0]))
+                    num_people_temporal_max = max(num_people_temporal_max, len(pids_frame))
+            batch_num_heads = num_people_temporal_max
+        
         for frame_nb in frame_nbs:
             # check if frame exists
             path = os.path.join(clip,  str(frame_nb).zfill(8)+'.jpg')
             if not path in self.annotations.groups.keys():
                 t_sample['image'].append(torch.zeros((3, self.image_size[1], self.image_size[0]), dtype=torch.float32))
-                t_sample['heads'].append(torch.zeros((batch_num_heads+1, 3, 224, 224), dtype=torch.float32))
+                # t_sample['heads'].append(torch.zeros((batch_num_heads+1, 3, 224, 224), dtype=torch.float32))
+                t_sample['heads'].append(torch.zeros((batch_num_heads+1, 3, self.image_size[1], self.image_size[0]), dtype=torch.float32))
                 t_sample['head_centers'].append(torch.zeros((batch_num_heads+1, 2), dtype=torch.float32))
                 t_sample['head_masks'].append(torch.zeros((batch_num_heads+1, 1, self.image_size[1], self.image_size[0]), dtype=torch.float32))
                 t_sample['head_bboxes'].append(torch.zeros((batch_num_heads+1, 4), dtype=torch.float32))
@@ -412,6 +470,14 @@ class VideoAttentionTargetDataset_temporal(Dataset):
                         inout.append(-1)
                         coatt_ids.append(0)
                         speaking_scores.append(-1)
+                    
+                    # remove detected person to avoid the annotation noise of undetected person in the test set 
+                    # elif pid > 1000 and self.split == 'test':
+                        # head_bboxes.append(torch.zeros(4, dtype=torch.float32))
+                        # gaze_pts.append(torch.zeros(2, dtype=torch.float32)-1)
+                        # inout.append(-1)
+                        # coatt_ids.append(0)
+                        # speaking_scores.append(-1)
                     else:
                         head_box = head_bbox_img[pid_idx].squeeze()
                         head_bboxes.append(head_box)
@@ -462,6 +528,8 @@ class VideoAttentionTargetDataset_temporal(Dataset):
                 num_valid_heads = len(heads)
                 # num_missing_heads = max(self.num_people - num_valid_heads, 0) if self.num_people != "all" else 0    
                 num_missing_heads = max(self.num_people + 1 - num_valid_heads, 1) if self.num_people != "all" else 1    # pad at least one person
+                if self.split == 'test':
+                    num_missing_heads = max(num_people_temporal_max + 1 - num_valid_heads, 1) # pad at least one person
 
                 # Get lah id
                 lah_ids = torch.zeros(len(heads), dtype=torch.long) - 5
@@ -515,7 +583,8 @@ class VideoAttentionTargetDataset_temporal(Dataset):
                 # Pad missing people (ie. heads, head_bboxes, gaze_pt and coatt)
                 if num_missing_heads > 0:
                     head_bboxes = torch.cat([torch.zeros((num_missing_heads, 4), dtype=torch.float32), head_bboxes])
-                    heads = torch.cat([torch.zeros((num_missing_heads, 3, 224, 224), dtype=torch.float32), heads])
+                    # heads = torch.cat([torch.zeros((num_missing_heads, 3, 224, 224), dtype=torch.float32), heads])
+                    heads = torch.cat([torch.zeros((num_missing_heads, 3, self.image_size[1], self.image_size[0]), dtype=torch.float32), heads])
                     gaze_pts = torch.cat([torch.zeros((num_missing_heads, 2), dtype=torch.float32)-1, gaze_pts])
                     inout = torch.cat([torch.zeros((num_missing_heads, ), dtype=torch.float32)-1, inout])
                     coatt_ids = torch.cat([torch.zeros((num_missing_heads, ), dtype=torch.long), coatt_ids])
@@ -580,14 +649,27 @@ class VideoAttentionTargetDataset_temporal(Dataset):
                 t_sample[key] = torch.stack(t_sample[key], axis=0).squeeze()
                 if self.temporal_context==0:
                     t_sample[key] = t_sample[key].unsqueeze(0)
+
+
+        # for GazeLLE compatibility
+        t_sample['bboxes'] = t_sample['head_bboxes']
+        t_sample['images'] = t_sample['image']
+
         return t_sample
 
     def __len__(self):
         # return len(self.paths)
         
-        self.use_ratio = 0.03
+        # self.use_ratio = 0.03
         # self.use_ratio = 0.1
-        # self.use_ratio = 1.0
+        self.use_ratio = 1.0
+
+        if self.split=='test':
+            # return 30
+            # self.use_ratio = 0.1
+            # self.use_ratio = 0.3
+            self.use_ratio = 1.0
+
         return int(len(self.paths) * self.use_ratio)
 
     
@@ -622,7 +704,8 @@ class VideoAttentionTargetDataModule(pl.LightningDataModule):
         self.temporal_stride=temporal_stride
         self.predict_input_file = predict_input_file
         self.predict_annotation_file = predict_annotation_file
-        self.image_size = pair(image_size)
+        # self.image_size = pair(image_size)
+        self.image_size = (self.cfg.data.image_size, self.cfg.data.image_size)
 
 
     def setup(self, stage: str):
@@ -637,7 +720,8 @@ class VideoAttentionTargetDataModule(pl.LightningDataModule):
                         hue=None,
                         p=0.8,
                     ),
-                    Resize(img_size=self.image_size, head_size=(224, 224)),
+                    # Resize(img_size=self.image_size, head_size=(224, 224)),
+                    Resize(img_size=(self.cfg.data.image_size, self.cfg.data.image_size), head_size=(self.cfg.data.image_size, self.cfg.data.image_size)),
                     ToTensor(),
                     Normalize(
                         img_mean=[0.31072, 0.25703, 0.24182],
@@ -661,7 +745,8 @@ class VideoAttentionTargetDataModule(pl.LightningDataModule):
 
             val_transform = Compose(
                 [
-                    Resize(img_size=self.image_size, head_size=(224, 224)),
+                    # Resize(img_size=self.image_size, head_size=(224, 224)),
+                    Resize(img_size=(self.cfg.data.image_size, self.cfg.data.image_size), head_size=(self.cfg.data.image_size, self.cfg.data.image_size)),
                     ToTensor(),
                     Normalize(
                         img_mean=[0.31072, 0.25703, 0.24182],
@@ -686,7 +771,8 @@ class VideoAttentionTargetDataModule(pl.LightningDataModule):
         elif stage == "validate":
             val_transform = Compose(
                 [
-                    Resize(img_size=self.image_size, head_size=(224, 224)),
+                    # Resize(img_size=self.image_size, head_size=(224, 224)),
+                    Resize(img_size=(self.cfg.data.image_size, self.cfg.data.image_size), head_size=(self.cfg.data.image_size, self.cfg.data.image_size)),
                     ToTensor(),
                     Normalize(
                         img_mean=[0.31072, 0.25703, 0.24182],
@@ -711,7 +797,8 @@ class VideoAttentionTargetDataModule(pl.LightningDataModule):
         elif stage == "test":
             test_transform = Compose(
                 [
-                    Resize(img_size=self.image_size, head_size=(224, 224)),
+                    # Resize(img_size=self.image_size, head_size=(224, 224)),
+                    Resize(img_size=(self.cfg.data.image_size, self.cfg.data.image_size), head_size=(self.cfg.data.image_size, self.cfg.data.image_size)),
                     ToTensor(),
                     Normalize(
                         img_mean=[0.31072, 0.25703, 0.24182],
@@ -737,7 +824,8 @@ class VideoAttentionTargetDataModule(pl.LightningDataModule):
         elif stage == "predict":
             predict_transform = Compose(
                 [
-                    Resize(img_size=224, head_size=(224, 224)),
+                    # Resize(img_size=224, head_size=(224, 224)),
+                    Resize(img_size=(self.cfg.data.image_size, self.cfg.data.image_size), head_size=(self.cfg.data.image_size, self.cfg.data.image_size)),
                     ToTensor(),
                     Normalize(
                         img_mean=[0.31072, 0.25703, 0.24182],

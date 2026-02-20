@@ -19,6 +19,7 @@ from src.datasets.uco_laeo_temporal import VideoLAEODataModule
 from src.datasets.childplay_temporal import ChildPlayDataModule
 from src.datasets.vacation import VacationDataModule
 from src.models import BaselineModel, ChongModel, NoraModel, SharinganModel, InteractModel
+from src.models_custom import GazeLLE
 from src.tracking import init_logger, save_code_snapshot
 from src.utils import Stage
 import sys
@@ -69,7 +70,10 @@ class Experiment(BaseExperiment):
     def init_model(self):
         # model = RinneganModel(cfg=self.cfg)
         # model = MultiViTRinneganModel(cfg=self.cfg)
-        model = InteractModel(cfg=self.cfg)
+        if self.cfg.model.model_name == 'gaze_lle':
+            model = GazeLLE(cfg=self.cfg)
+        else:
+            model = InteractModel(cfg=self.cfg)
         # model = SharinganModel(cfg=self.cfg)
         # model = ChongModel(cfg=self.cfg)
         # model = BaselineModel(cfg=self.cfg)
@@ -397,6 +401,25 @@ class Experiment(BaseExperiment):
         ckpt_path = self.cfg.test.checkpoint if ("train" not in self.tasks) else "best"
         print(colored(f"Testing model from: `{ckpt_path}`.", TERM_COLOR))
         self.trainer.test(self.model, self.data, ckpt_path=ckpt_path, verbose=True)
+
+        '''
+        # Convert .pt checkpoint to .ckpt for PL
+        ckpt_path = self.cfg.test.checkpoint if ("train" not in self.tasks) else "best"
+        keys = self.model.load_state_dict(torch.load(ckpt_path, map_location="cpu"), strict=False)
+
+        checkpoint_data = {
+            'epoch': 0,
+            'global_step': 0,
+            'pytorch-lightning_version': '1.9.0',
+            'state_dict': self.model.state_dict(),
+            'hyper_parameters': model.hparams,s
+        }
+        # output_ckpt_path = os.path.join('checkpoints', 'gazelle_converted.ckpt')
+        output_ckpt_path = ckpt_path.replace('.pt', '.ckpt')
+        torch.save(checkpoint_data, output_ckpt_path)
+
+        assert False, 'stop after conversion'
+        # '''
 
     def predict(self):
         raise NotImplementedError("Predict method is not implemented yet.")

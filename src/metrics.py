@@ -399,8 +399,9 @@ class GroupCost():
     
 
 class GroupAP():
-    def __init__(self, iou_thresh=0.75):
-        self.iou_thresh = iou_thresh
+    def __init__(self, iou_thresh=0.75, hm_thresh=0.2):
+        self.iou_thresh = iou_thresh # threshold for group matching
+        self.hm_thresh = hm_thresh  # threshold for co-attention distance
 
     def calculateAveragePrecision(self, rec, prec):
         mrec = [0] + [e for e in rec] + [1]
@@ -459,6 +460,8 @@ class GroupAP():
             _, g_token_num_ori, people_num = grouping_gt_b.shape
             grouping_gt_b = grouping_gt_b.view(g_token_num_ori, people_num)
             grouping_gt_b = grouping_gt_b[grouping_gt_b.sum(dim=-1)>1]
+            if grouping_gt_b.shape[0]==0:
+                continue
             npos += grouping_gt_b.shape[0]
 
             # get the predicted groups
@@ -478,11 +481,16 @@ class GroupAP():
             grouping_pred_b = grouping_pred_b[group_flag]
             hm_pred_b = hm_pred_b[group_flag]
 
-            # compute confidence scores for each predicted group
-            # grouping_pred_b_conf = torch.mean(grouping_pred_b, dim=-1, dtype=torch.float32)
-            # confidence_scores = torch.cat([confidence_scores, grouping_pred_b_conf])
+            # print("Batch {}: #GT groups = {}, #Pred groups = {}".format(b, grouping_gt_b.shape[0], grouping_pred_b.shape[0]))
+            # print("  Group GT:\n", grouping_gt_b)
+            # print("  Group Pred:\n", grouping_pred_b)
 
-            # compute confidence scores for each predicted group
+            # compute confidence scores for each predicted group (based on mean of grouping predictions)
+            # grouping_pred_b_conf = torch.mean(grouping_pred_b, dim=-1, dtype=torch.float32)
+            # confidence_scores = grouping_pred_b_conf
+            # confidence_scores_all = torch.cat([confidence_scores_all, confidence_scores])
+
+            # compute confidence scores for each predicted group (based on peak value in co-attention heatmap)
             hm_pred_b_flat = hm_pred_b.view(hm_pred_b.shape[0], H*W)
             hm_pred_b_peak_vals, _ = torch.max(hm_pred_b_flat, dim=-1)
             confidence_scores = hm_pred_b_peak_vals
@@ -495,6 +503,7 @@ class GroupAP():
 
             # match the predictions to ground-truth
             det_gt = torch.zeros(grouping_gt_b.shape[0], dtype=torch.bool, device=grouping_gt_b.device)
+
             for pred_idx in range(grouping_pred_b.shape[0]):
                 pred = grouping_pred_b[pred_idx]
                 ious = []
@@ -504,19 +513,23 @@ class GroupAP():
                     ious.append(iou)
                 ious = torch.tensor(ious)
                 max_iou = ious.max() if len(ious)>0 else torch.tensor(0.0)
+                ious_argmax = torch.argmax(ious, dim=0) if len(ious)>0 else torch.tensor(-1)
 
-                if max_iou >= self.iou_thresh:
-                    if not det_gt[ious.argmax()]:
+                # compute hm distance if matched
+                hm_pred_target = hm_pred_b[pred_idx]
+                hm_gt_target = hm_gt_b[ious_argmax]
+                hm_dist = self.cal_coatt_dist(hm_pred_target.unsqueeze(0), hm_gt_target.unsqueeze(0))
+                # print("    Pred idx {}: max IoU = {:.4f}, HM dist = {:.4f}".format(pred_idx, max_iou.item(), hm_dist.item()))
+
+                # if max_iou >= self.iou_thresh:
+                if (max_iou >= self.iou_thresh) and (hm_dist.item() <= self.hm_thresh):
+                    if not det_gt[ious_argmax]:
                         TP.append(1)
                         FP.append(0)
 
                         # mark gt as detected
                         det_gt[ious.argmax()] = True
 
-                        # compute hm distance if matched
-                        hm_pred_target = hm_pred_b[pred_idx]
-                        hm_gt_target = hm_gt_b[ious.argmax()]
-                        hm_dist = self.cal_coatt_dist(hm_pred_target.unsqueeze(0), hm_gt_target.unsqueeze(0))
                         dists.append(hm_dist.item())
                         npos_dist += 1
                     else:
@@ -548,3 +561,373 @@ class GroupAP():
         }
 
         return ret_metrics
+
+
+class GroupAPFast():
+    """GPU-optimized version of GroupAP using vectorized operations"""
+    def __init__(self, iou_thresh=0.75, hm_thresh=0.2):
+        self.iou_thresh = iou_thresh
+        self.hm_thresh = hm_thresh
+
+    def calculateAveragePrecision(self, rec, prec):
+        mrec = np.concatenate(([0.], rec, [1.]))
+        mpre = np.concatenate(([0.], prec, [0.]))
+        mpre = np.maximum.accumulate(mpre[::-1])[::-1]
+        idx = np.where(mrec[1:] != mrec[:-1])[0]
+        ap = np.sum((mrec[idx + 1] - mrec[idx]) * mpre[idx + 1])
+        return [ap, mpre[:-1], mrec[:-1], idx]
+
+    def cal_group_IoU_vectorized(self, gt: torch.Tensor, pred: torch.Tensor):
+        """Vectorized IoU computation (GPU-optimized)
+        gt: (n_gt, n_people)
+        pred: (n_pred, n_people)
+        return: (n_pred, n_gt)
+        """
+        gt_expanded = gt.unsqueeze(0)  # (1, n_gt, n_people)
+        pred_expanded = pred.unsqueeze(1)  # (n_pred, 1, n_people)
+        
+        intersection = ((gt_expanded == 1) & (pred_expanded == 1)).sum(dim=-1).float()
+        union = ((gt_expanded == 1) | (pred_expanded == 1)).sum(dim=-1).float()
+        
+        iou = torch.nan_to_num(intersection / union, nan=0.0)
+        return iou
+
+    def cal_coatt_dist_batch(self, hm_pred: torch.Tensor, hm_gt: torch.Tensor):
+        """Batch compute co-attention distance (GPU-optimized)
+        hm_pred: (n_pred, H, W)
+        hm_gt: (n_gt, H, W)
+        return: (n_pred, n_gt)
+        """
+        hm_pred_pnt = spatial_argmax2d(hm_pred, normalize=True)  # (n_pred, 2)
+        hm_gt_pnt = spatial_argmax2d(hm_gt, normalize=True)  # (n_gt, 2)
+        
+        # Compute pairwise distances on GPU
+        hm_pred_exp = hm_pred_pnt.unsqueeze(1)  # (n_pred, 1, 2)
+        hm_gt_exp = hm_gt_pnt.unsqueeze(0)  # (1, n_gt, 2)
+        
+        dist = (hm_gt_exp - hm_pred_exp).pow(2).sum(-1).sqrt()  # (n_pred, n_gt)
+        return dist
+    
+    def cal_coatt_dist_batch_from_cd(self, hm_pred_pk_cd: torch.Tensor, hm_gt_pk_cd: torch.Tensor):
+        """Batch compute co-attention distance (GPU-optimized)
+        hm_pred_pk_cd: (n_pred, 2) - predicted co-attention peak coordinates
+        hm_gt_pk_cd: (n_gt, 2) - ground-truth co-attention peak coordinates
+        """
+    
+        hm_pred_pnt = hm_pred_pk_cd  # (n_pred, 2)
+        hm_gt_pnt = hm_gt_pk_cd  # (n_gt, 2)
+        
+        # Compute pairwise distances on GPU
+        hm_pred_exp = hm_pred_pnt.unsqueeze(1)  # (n_pred, 1, 2)
+        hm_gt_exp = hm_gt_pnt.unsqueeze(0)  # (1, n_gt, 2)
+        
+        dist = (hm_gt_exp - hm_pred_exp).pow(2).sum(-1).sqrt()  # (n_pred, n_gt)
+        return dist
+
+    # def compute(self, grouping_pred: torch.Tensor, grouping_gt: torch.Tensor, hm_pred: torch.Tensor, hm_gt: torch.Tensor):
+    def compute(self, grouping_pred: torch.Tensor, grouping_gt: torch.Tensor, 
+                        hm_pred_pk_cd: torch.Tensor, hm_gt_pk_cd: torch.Tensor,
+                        hm_pred_pk_val: torch.Tensor, hm_gt_pk_val: torch.Tensor):
+
+        device = grouping_gt[0].device
+        
+        all_TP = []
+        all_FP = []
+        all_scores = []
+        npos = 0
+        npos_dist = 0
+        dists = []
+
+        batch_all = len(grouping_gt)
+        
+        for b in range(batch_all):
+            # Get ground-truth groups
+            grouping_gt_b = grouping_gt[b]
+            _, g_token_num_ori, people_num = grouping_gt_b.shape
+            grouping_gt_b = grouping_gt_b.view(g_token_num_ori, people_num)
+            grouping_gt_b = grouping_gt_b[grouping_gt_b.sum(dim=-1) > 1]
+
+            if grouping_gt_b.shape[0] == 0:
+                continue
+            
+            npos += grouping_gt_b.shape[0]
+
+            # Get predicted groups
+            grouping_pred_b = grouping_pred[b].view(-1, people_num)
+            
+            # Get heatmaps
+            # hm_pred_b = hm_pred_pk_cd[b]
+            # hm_gt_b = hm_gt[b]
+            # _, _, H, W = hm_pred_b.shape
+            # hm_pred_b = hm_pred_b.view(-1, H, W)
+            # hm_gt_b = hm_gt_b.view(-1, H, W)
+            hm_gt_pk_cd_b = hm_gt_pk_cd[b][0]
+
+            # Filter predictions with group size > 1
+            group_flag = grouping_pred_b.sum(dim=-1) > 1
+            if group_flag.sum() == 0:
+                continue
+            
+            grouping_pred_b = grouping_pred_b[group_flag]
+            # hm_pred_b = hm_pred_b[group_flag]
+            hm_pred_pk_cd_b = hm_pred_pk_cd[b][0][group_flag]
+
+            # Compute confidence scores from heatmap peaks
+            # hm_pred_b_flat = hm_pred_b.view(hm_pred_b.shape[0], H * W)
+            # scores = hm_pred_b_flat.max(dim=-1)[0]
+            scores = hm_pred_pk_val[b][0][group_flag]
+            all_scores.append(scores)
+
+            # Sort by confidence
+            scores_sorted, sorted_indices = torch.sort(scores, descending=True)
+            grouping_pred_b = grouping_pred_b[sorted_indices]
+            # hm_pred_b = hm_pred_b[sorted_indices]
+
+            # Vectorized IoU computation
+            iou_matrix = self.cal_group_IoU_vectorized(grouping_gt_b, grouping_pred_b)  # (n_pred, n_gt)
+            max_ious, max_gt_idx = iou_matrix.max(dim=1)  # (n_pred,)
+
+            # Vectorized distance computation
+            # dist_matrix = self.cal_coatt_dist_batch(hm_pred_b, hm_gt_b)  # (n_pred, n_gt)
+            dist_matrix = self.cal_coatt_dist_batch_from_cd(hm_pred_pk_cd_b, hm_gt_pk_cd_b)  # (n_pred, n_gt)
+
+            # Get distances for max-IoU matched GTs
+            matched_dists = dist_matrix[torch.arange(dist_matrix.shape[0], device=device), max_gt_idx]
+
+            # Track which GT has been matched (GPU tensor)
+            det_gt = torch.zeros(grouping_gt_b.shape[0], dtype=torch.bool, device=device)
+
+            # Vectorized matching logic
+            iou_valid = max_ious >= self.iou_thresh
+            dist_valid = matched_dists <= self.hm_thresh
+            match_valid = iou_valid & dist_valid
+
+            # Process matches in batch
+            pred_indices = torch.arange(grouping_pred_b.shape[0], device=device)
+            
+            for pred_idx in range(grouping_pred_b.shape[0]):
+                if match_valid[pred_idx]:
+                    gt_idx = max_gt_idx[pred_idx]
+                    if not det_gt[gt_idx]:
+                        all_TP.append(1)
+                        all_FP.append(0)
+                        det_gt[gt_idx] = True
+                        dists.append(matched_dists[pred_idx].item())
+                        npos_dist += 1
+                    else:
+                        all_TP.append(0)
+                        all_FP.append(1)
+                else:
+                    all_TP.append(0)
+                    all_FP.append(1)
+
+        # Global sorting by confidence scores
+        if len(all_scores) == 0:
+            return {
+                'ap': 0,
+                'prec': 0,
+                'rec': 0,
+                'npos': npos,
+                'npos_dist': 0,
+                'dist': 0
+            }
+
+        all_scores = torch.cat(all_scores)
+        order = torch.argsort(all_scores, descending=True)
+
+        # Convert to numpy for final AP computation
+        TP = np.array(all_TP)[order.cpu().numpy()]
+        FP = np.array(all_FP)[order.cpu().numpy()]
+
+        # Compute metrics
+        acc_TP = np.cumsum(TP)
+        acc_FP = np.cumsum(FP)
+        rec = acc_TP / npos if npos > 0 else np.array([0])
+        prec = np.divide(acc_TP, (acc_FP + acc_TP))
+        
+        ap, mpre, mrec, ii = self.calculateAveragePrecision(rec.tolist(), prec.tolist())
+
+        ret_metrics = {
+            'ap': ap,
+            'prec': prec,
+            'rec': rec,
+            'npos': npos,
+            'npos_dist': npos_dist,
+            'dist': np.mean(dists) if dists else 0
+        }
+
+        return ret_metrics
+
+
+# class GroupAP:
+#     def __init__(self, iou_thresh=0.75):
+#         self.iou_thresh = iou_thresh
+
+#     # --------------------------------------------------
+#     # AP computation (NumPy, vectorized)
+#     # --------------------------------------------------
+#     def calculateAveragePrecision(self, rec, prec):
+#         mrec = np.concatenate(([0.], rec, [1.]))
+#         mpre = np.concatenate(([0.], prec, [0.]))
+
+#         # precision envelope
+#         mpre = np.maximum.accumulate(mpre[::-1])[::-1]
+
+#         idx = np.where(mrec[1:] != mrec[:-1])[0]
+#         ap = np.sum((mrec[idx + 1] - mrec[idx]) * mpre[idx + 1])
+
+#         return ap, mpre[:-1], mrec[:-1], idx
+
+#     # --------------------------------------------------
+#     # Vectorized Group IoU
+#     # --------------------------------------------------
+#     def cal_group_IoU_matrix(self, gt: torch.Tensor, pred: torch.Tensor):
+#         """
+#         gt   : [G, P]  ground-truth groups
+#         pred : [K, P]  predicted groups
+#         return: [K, G] IoU matrix
+#         """
+#         gt = gt.bool()
+#         pred = pred.bool()
+
+#         intersection = (pred[:, None, :] & gt[None, :, :]).sum(dim=-1)
+#         union = (pred[:, None, :] | gt[None, :, :]).sum(dim=-1)
+
+#         iou = intersection.float() / torch.clamp(union.float(), min=1.0)
+#         return iou
+
+#     # --------------------------------------------------
+#     # Co-attention distance (batch)
+#     # --------------------------------------------------
+#     def cal_coatt_dist(self, hm_pred: torch.Tensor, hm_gt: torch.Tensor):
+#         hm_pred_pnt = spatial_argmax2d(hm_pred, normalize=True)
+#         hm_gt_pnt = spatial_argmax2d(hm_gt, normalize=True)
+#         return (hm_gt_pnt - hm_pred_pnt).pow(2).sum(-1).sqrt()
+
+#     # --------------------------------------------------
+#     # Main evaluation
+#     # --------------------------------------------------
+#     def compute(self, grouping_pred, grouping_gt, hm_pred, hm_gt):
+
+#         all_scores = []
+#         all_TP = []
+#         all_FP = []
+
+#         npos = 0
+#         npos_dist = 0
+#         dists = []
+
+#         B = len(grouping_gt)
+
+#         for b in range(B):
+#             # ------------------------
+#             # GT groups
+#             # ------------------------
+#             gt_b = grouping_gt[b]
+#             _, g_token_num_ori, people_num = gt_b.shape
+#             gt_b = gt_b.view(g_token_num_ori, people_num)
+#             gt_b = gt_b[gt_b.sum(dim=-1) > 1]
+
+#             n_gt = gt_b.shape[0]
+#             npos += n_gt
+#             if n_gt == 0:
+#                 continue
+
+#             # ------------------------
+#             # Pred groups
+#             # ------------------------
+#             pred_b = grouping_pred[b].view(-1, people_num)
+#             group_flag = pred_b.sum(dim=-1) > 1
+#             if group_flag.sum() == 0:
+#                 continue
+
+#             pred_b = pred_b[group_flag]
+
+#             # ------------------------
+#             # Heatmaps
+#             # ------------------------
+#             hm_pred_b = hm_pred[b]
+#             hm_gt_b = hm_gt[b]
+#             _, _, H, W = hm_pred_b.shape
+
+#             hm_pred_b = hm_pred_b.view(-1, H, W)[group_flag]
+#             hm_gt_b = hm_gt_b.view(-1, H, W)
+
+#             # ------------------------
+#             # Confidence score (HM peak)
+#             # ------------------------
+#             scores = hm_pred_b.flatten(1).max(dim=-1)[0]
+
+#             # sort by confidence
+#             scores, order = torch.sort(scores, descending=True)
+#             pred_b = pred_b[order]
+#             hm_pred_b = hm_pred_b[order]
+
+#             all_scores.append(scores)
+
+#             # ------------------------
+#             # IoU matching
+#             # ------------------------
+#             ious = self.cal_group_IoU_matrix(gt_b, pred_b)  # [K, G]
+#             max_iou, max_idx = ious.max(dim=1)
+
+#             det_gt = torch.zeros(n_gt, dtype=torch.bool, device=gt_b.device)
+
+#             matched_pred_hm = []
+#             matched_gt_hm = []
+
+#             for k in range(pred_b.shape[0]):
+#                 if max_iou[k] >= self.iou_thresh:
+#                     g = max_idx[k]
+#                     if not det_gt[g]:
+#                         all_TP.append(1)
+#                         all_FP.append(0)
+#                         det_gt[g] = True
+
+#                         matched_pred_hm.append(hm_pred_b[k])
+#                         matched_gt_hm.append(hm_gt_b[g])
+#                         npos_dist += 1
+#                     else:
+#                         all_TP.append(0)
+#                         all_FP.append(1)
+#                 else:
+#                     all_TP.append(0)
+#                     all_FP.append(1)
+
+#             # HM distance batch
+#             if matched_pred_hm:
+#                 hm_dist = self.cal_coatt_dist(
+#                     torch.stack(matched_pred_hm),
+#                     torch.stack(matched_gt_hm)
+#                 )
+#                 dists.extend(hm_dist.detach().cpu().tolist())
+
+#         # ------------------------
+#         # Global sorting
+#         # ------------------------
+#         if len(all_scores) == 0:
+#             return dict(ap=0, prec=0, rec=0, npos=npos,
+#                         npos_dist=0, dist=np.nan)
+
+#         all_scores = torch.cat(all_scores)
+#         order = torch.argsort(all_scores, descending=True)
+
+#         TP = np.array(all_TP)[order.cpu().numpy()]
+#         FP = np.array(all_FP)[order.cpu().numpy()]
+
+#         acc_TP = np.cumsum(TP)
+#         acc_FP = np.cumsum(FP)
+
+#         rec = acc_TP / max(npos, 1)
+#         prec = acc_TP / np.maximum(acc_TP + acc_FP, 1)
+
+#         ap, mpre, mrec, ii = self.calculateAveragePrecision(rec, prec)
+
+#         return {
+#             'ap': ap,
+#             'prec': prec,
+#             'rec': rec,
+#             'npos': npos,
+#             'npos_dist': npos_dist,
+#             'dist': float(np.mean(dists)) if dists else np.nan
+#         }

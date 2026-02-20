@@ -15,45 +15,27 @@ experiment:
     group: null # /!\
     task: test # combination of {train, val, test, predict} separated by '+' sign. TODO: train+predict # /!\
     # dataset: combined_social # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
-    # dataset: videocoatt # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
+    dataset: videocoatt # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
+    # dataset: videoattentiontarget # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
     # dataset: childplay # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
-    dataset: videoattentiontarget # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
     # dataset: uco_laeo # /!\ gazefollow, childplay, videoattentiontarget, videocoatt, uco_laeo, combined_social, vacation
     path: ${hydra:runtime.cwd} # to retrieve logs and checkpoints
-    cuda: 6
+    cuda: 5
 
 # ------------------------------------------------------------------------------------------------------------------- #
 
-data:
-    num_samples: 36000    # GazeFollow: 108955, VAT: 9000, childplay: 15000, combined_social: 36000, laeo: 2900
-    # num_people: 39 # /!\ int or -1 for all
-    num_people: all # /!\ int or -1 for all
-    num_coatt: 40
-    return_depth: False # /!\
-    return_head_mask: False # /!\
-    image_size: 224 # /!\ used only for scene tokenizer
-    heatmap_size: 64
-    heatmap_sigma: 3
-    # temporal_context: 2    # 2; temporal context window # frames
-    temporal_context: 0    # 2; temporal context window # frames
-    temporal_stride: 3    # 3; temporal stride for model input
-    vlm_dim: 24    # ava: 24, swig:406, hico:117 dimension of VLM context vector
-    gf:
-        root: /home-local/nakatani/dataset/gazefollow_extended
-        root_depth: None
-        root_focal: None
-    coatt:
-        root: data/VideoCoAtt_Dataset
-    vat:
-        root: /home-local/nakatani/dataset/videoattentiontarget
-    laeo:
-        root: /home-local/nakatani/dataset/ucolaeodb/
-    childplay:
-        root: /home-local/nakatani/dataset/ChildPlay-gaze
-        root_depth: None
-        root_focal: None
-    # vacation:
-    #     root: /idiap/temp/agupta/data/VACATION
+test:
+    # main
+    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2026-02-11/09-12-36_combined_social_COA_False_bce_SOC_True_hm_coef_iter_temp_2-3_1_0.0001_FRZ_IT_VE/best.ckpt"
+    checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2026-02-13/17-23-01_combined_social_COA_True_True_bce_SOC_True_hm_coef_iter_temp_2-3_1_1e-05_w_gaze_vec_FRZ_IT_VE/best.ckpt"
+    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2026-02-16/21-21-33_combined_social_COA_True_True_bce_SOC_True_hm_coef_iter_temp_2-3_1_COAimg_none_1e-05_w_gaze_vec_FRZ_GE_GEB_IT_VE_VA_GD_ID/best.ckpt"
+
+    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2026-02-19/08-19-48_combined_social_COA_True_True_bce_SOC_True_hm_coef_iter_temp_2-3_1_w_gaze_vec_FRZ_IT_VE_1e-06/best.ckpt"
+    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2026-02-19/16-39-06_combined_social_COA_True_True_bce_SOC_False_hm_coef_iter_temp_2-3_1_w_gaze_vec_FRZ_IT_VE_1e-05/best.ckpt"
+    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2026-02-19/16-43-15_combined_social_COA_True_True_bce_SOC_True_hm_coef_temp_2-3_w_gaze_vec_FRZ_IT_VE_1e-05/best.ckpt"
+
+    batch_size: 1 # /!\
+    device: ${train.device}
 
 # ------------------------------------------------------------------------------------------------------------------- #
 
@@ -83,15 +65,53 @@ model:
         multivit_weights: False
     interact:
         # person_token_type: normal # {normal, w_gaze_hm, w_gaze_vec}
-        person_token_type: normal
+        person_token_type: w_gaze_vec
+        # person_token_type: w_gaze_vec_inout
+        # person_token_type: normal
+    coatt_coatt_layer: self
+    coatt_person_layer: sep
+    # coatt_image_layer: sep
+    coatt_image_layer: none
     # coatt_hm_type: hm # {coef, hm, coef_iter}
     # coatt_hm_type: coef # {coef, hm, coef_iter}
     coatt_hm_type: coef_iter # {coef, hm, coef_iter}
-    # coatt_coef_iter_cnt: 1
-    coatt_coef_iter_cnt: 3
-    coatt_coatt_layer: self
-    coatt_person_layer: sep
+    coatt_coef_iter_cnt: 1
+    # coatt_coef_iter_cnt: 3
     weights: False # {False, path to weights}
+
+# ------------------------------------------------------------------------------------------------------------------- #
+
+data:
+    num_samples: 36000    # GazeFollow: 108955, VAT: 9000, childplay: 15000, combined_social: 36000, laeo: 2900
+    # num_people: 10 # /!\ int or -1 for all
+    num_people: all # /!\ int or -1 for all
+    num_coatt: 40
+    return_depth: False # /!\
+    return_head_mask: False # /!\
+    image_size: 224 # /!\ used only for scene tokenizer
+    heatmap_size: 64
+    heatmap_sigma: 3
+    temporal_context: 2    # 2; temporal context window # frames
+    # temporal_context: 0    # 2; temporal context window # frames
+    temporal_stride: 3    # 3; temporal stride for model input
+    # temporal_stride: 0    # 3; temporal stride for model input
+    vlm_dim: 24    # ava: 24, swig:406, hico:117 dimension of VLM context vector
+    gf:
+        root: /home-local/nakatani/dataset/gazefollow_extended
+        root_depth: None
+        root_focal: None
+    coatt:
+        root: data/VideoCoAtt_Dataset
+    vat:
+        root: /home-local/nakatani/dataset/videoattentiontarget
+    laeo:
+        root: /home-local/nakatani/dataset/ucolaeodb/
+    childplay:
+        root: /home-local/nakatani/dataset/ChildPlay-gaze
+        root_depth: None
+        root_focal: None
+    # vacation:
+    #     root: /idiap/temp/agupta/data/VACATION
 
 # ------------------------------------------------------------------------------------------------------------------- #
 
@@ -140,39 +160,6 @@ train:
 val: 
     checkpoint: /idiap/temp/agupta/src/gaze_interact/experiments/2024-03-06/14-17-21/checkpoints/best.ckpt
     batch_size: 8 # /!\
-    device: ${train.device}
-
-# ------------------------------------------------------------------------------------------------------------------- #
-
-test:
-    # [iter=1]
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-24/11-42-44_COA_True_SOC_False/best.ckpt"
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-24/11-42-44_COA_True_SOC_False/last.ckpt"
-    # [iter=4]
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-24/11-45-22_COA_True_SOC_False/best.ckpt"
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-24/11-45-22_COA_True_SOC_False/last.ckpt"
-
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-26/10-24-24_COA_False_SOC_True/best.ckpt"
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-26/10-24-24_COA_False_SOC_True/last.ckpt"
-
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-26/10-24-42_COA_True_SOC_True/best.ckpt"
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-10-26/10-24-42_COA_True_SOC_True/last.ckpt"
-
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-11-12/10-18-13_COA_True_SOC_True_coatt_hm_coef/best.ckpt"
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-11-12/10-24-22_COA_False_SOC_True_coatt_hm_coef/best.ckpt"
-
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-11-13/13-49-02_COA_True_SOC_True_coatt_hm_coef_iter/best.ckpt"
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-11-13/13-49-02_COA_True_SOC_True_coatt_hm_coef_iter/last.ckpt"
-
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-11-13/22-25-17_COA_True_SOC_True_coatt_hm_coef/best.ckpt"
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-11-13/22-25-17_COA_True_SOC_True_coatt_hm_coef/last.ckpt"
-
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-11-15/09-24-55_COA_True_SOC_True_coatt_hm_coef_iter/best.ckpt"
-    # checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-11-15/09-24-55_COA_True_SOC_True_coatt_hm_coef_iter/last.ckpt"
-
-    checkpoint: "/home/nakatani/joint_attention_project/mtgs/checkpoints/combined_social/2025-11-17/11-31-47_COA_True_SOC_True_coatt_hm_coef_iter_3/last.ckpt"
-
-    batch_size: 1 # /!\
     device: ${train.device}
 
 # ------------------------------------------------------------------------------------------------------------------- #

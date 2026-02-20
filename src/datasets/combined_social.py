@@ -86,7 +86,8 @@ class CombinedSocialDataModule(pl.LightningDataModule):
                     #     hue=None,
                     #     p=0.8,
                     # ),
-                    Resize(img_size=self.image_size, head_size=(224, 224)),
+                    # Resize(img_size=self.image_size, head_size=(224, 224)),
+                    Resize(img_size=(self.cfg.data.image_size, self.cfg.data.image_size), head_size=(self.cfg.data.image_size, self.cfg.data.image_size)),
                     ToTensor(),
                     Normalize(
                         img_mean=IMG_MEAN,
@@ -152,16 +153,13 @@ class CombinedSocialDataModule(pl.LightningDataModule):
             
             # self.train_dataset = ConcatDataset([dataset_childplay, dataset_vat, dataset_laeo, dataset_coatt, dataset_gf])
             self.train_dataset = ConcatDataset([dataset_childplay, dataset_vat, dataset_laeo, dataset_coatt])
-            # self.train_dataset = ConcatDataset([dataset_vat, dataset_laeo, dataset_coatt])
-            # self.train_dataset = ConcatDataset([dataset_coatt])
-            # self.train_dataset = ConcatDataset([dataset_laeo])
-            # self.train_dataset = ConcatDataset([dataset_vat])
-            # self.train_dataset = ConcatDataset([dataset_childplay])
+            # self.train_dataset = ConcatDataset([dataset_vat, dataset_childplay, dataset_coatt])
 
             ########## val #############
             val_transform = Compose(
                 [
-                    Resize(img_size=self.image_size, head_size=(224, 224)),
+                    # Resize(img_size=self.image_size, head_size=(224, 224)),
+                    Resize(img_size=(self.cfg.data.image_size, self.cfg.data.image_size), head_size=(self.cfg.data.image_size, self.cfg.data.image_size)),
                     ToTensor(),
                     Normalize(
                         img_mean=IMG_MEAN,
@@ -227,16 +225,13 @@ class CombinedSocialDataModule(pl.LightningDataModule):
             )
             # self.val_dataset = ConcatDataset([dataset_childplay, dataset_vat, dataset_laeo, dataset_coatt, dataset_gf])
             self.val_dataset = ConcatDataset([dataset_childplay, dataset_vat, dataset_laeo, dataset_coatt])
-            # self.val_dataset = ConcatDataset([dataset_vat, dataset_laeo, dataset_coatt])
-            # self.val_dataset = ConcatDataset([dataset_coatt])
-            # self.val_dataset = ConcatDataset([dataset_laeo])
-            # self.val_dataset = ConcatDataset([dataset_vat])
-            # self.val_dataset = ConcatDataset([dataset_childplay])
+            # self.val_dataset = ConcatDataset([dataset_vat, dataset_childplay, dataset_coatt])
 
         elif stage == "validate":
             val_transform = Compose(
                 [
-                    Resize(img_size=self.image_size, head_size=(224, 224)),
+                    # Resize(img_size=self.image_size, head_size=(224, 224)),
+                    Resize(img_size=(self.cfg.data.image_size, self.cfg.data.image_size), head_size=(self.cfg.data.image_size, self.cfg.data.image_size)),
                     ToTensor(),
                     Normalize(
                         img_mean=IMG_MEAN,
@@ -299,11 +294,7 @@ class CombinedSocialDataModule(pl.LightningDataModule):
             )
 #             self.val_dataset = ConcatDataset([dataset_childplay, dataset_vat, dataset_laeo, dataset_coatt, dataset_gf])
             self.val_dataset = ConcatDataset([dataset_childplay, dataset_vat, dataset_laeo, dataset_coatt])
-            # self.val_dataset = ConcatDataset([dataset_vat, dataset_laeo, dataset_coatt])
-            # self.val_dataset = ConcatDataset([dataset_coatt])
-            # self.val_dataset = ConcatDataset([dataset_laeo])
-            # self.val_dataset = ConcatDataset([dataset_vat])
-            # self.val_dataset = ConcatDataset([dataset_childplay])
+            # self.val_dataset = ConcatDataset([dataset_childplay, dataset_vat, dataset_coatt])
 
         elif stage == "test":
             aspect = False    # maintain aspect ratio
@@ -313,7 +304,8 @@ class CombinedSocialDataModule(pl.LightningDataModule):
                 img_size = self.image_size
             test_transform = Compose(
                 [
-                    Resize(img_size=img_size, head_size=(224, 224)),
+                    # Resize(img_size=img_size, head_size=(224, 224)),
+                    Resize(img_size=(self.cfg.data.image_size, self.cfg.data.image_size), head_size=(self.cfg.data.image_size, self.cfg.data.image_size)),
                     ToTensor(),
                     Normalize(
                         img_mean=IMG_MEAN,
@@ -391,7 +383,8 @@ class CombinedSocialDataModule(pl.LightningDataModule):
         elif stage == "predict":
             predict_transform = Compose(
                 [
-                    Resize(img_size=224, head_size=(224, 224)),
+                    # Resize(img_size=224, head_size=(224, 224)),
+                    Resize(img_size=(self.cfg.data.image_size, self.cfg.data.image_size), head_size=(self.cfg.data.image_size, self.cfg.data.image_size)),
                     ToTensor(),
                     Normalize(
                         img_mean=IMG_MEAN,

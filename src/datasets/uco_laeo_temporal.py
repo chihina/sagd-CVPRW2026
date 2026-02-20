@@ -57,7 +57,8 @@ class VideoLAEODataset_temporal(Dataset):
         self.stride = stride
         self.jitter_bbox = RandomHeadBboxJitter(p=1.0, tr=tr)
         self.transform = transform
-        self.image_size = image_size
+        # self.image_size = image_size
+        self.image_size = (cfg.data.image_size, cfg.data.image_size) if isinstance(cfg.data.image_size, int) else cfg.data.image_size
         self.heatmap_sigma = heatmap_sigma
         self.heatmap_size = heatmap_size
         self.num_people = num_people
@@ -250,12 +251,25 @@ class VideoLAEODataset_temporal(Dataset):
                 "dataset": 'laeo'
                 }
         t_sample['pids'] = torch.cat([torch.zeros((batch_num_heads + 1 -len(person_ids), ))-1, torch.from_numpy(person_ids)])
+
+        # adjust batch_num_heads for test split based on max num people in the clip
+        if self.split=='test':
+            num_people_temporal_max = batch_num_heads
+            for frame_nb in frame_nbs:
+                path = os.path.join(clip,  str(frame_nb).zfill(6)+'.jpg')
+                if path in self.annotations.groups.keys():
+                    img_annotations = self.annotations.get_group(path)
+                    pids_frame = np.arange(len(img_annotations['head_bboxes'].values[0]))
+                    num_people_temporal_max = max(num_people_temporal_max, len(pids_frame))
+            batch_num_heads = num_people_temporal_max
+
         for frame_nb in frame_nbs:
             # check if frame exists
             path = os.path.join(clip,  str(frame_nb).zfill(6)+'.jpg')
             if not path in self.annotations.groups.keys():
                 t_sample['image'].append(torch.zeros((3, self.image_size[1], self.image_size[0]), dtype=torch.float32))
-                t_sample['heads'].append(torch.zeros((batch_num_heads+1, 3, 224, 224), dtype=torch.float32))
+                # t_sample['heads'].append(torch.zeros((batch_num_heads+1, 3, 224, 224), dtype=torch.float32))
+                t_sample['heads'].append(torch.zeros((batch_num_heads+1, 3, self.image_size[1], self.image_size[0]), dtype=torch.float32))
                 t_sample['head_centers'].append(torch.zeros((batch_num_heads+1, 2), dtype=torch.float32))
                 t_sample['head_masks'].append(torch.zeros((batch_num_heads+1, 1, self.image_size[1], self.image_size[0]), dtype=torch.float32))
                 t_sample['head_bboxes'].append(torch.zeros((batch_num_heads+1, 4), dtype=torch.float32))
@@ -392,7 +406,9 @@ class VideoLAEODataset_temporal(Dataset):
 
                 num_valid_heads = len(heads)
                 num_missing_heads = max(self.num_people + 1 - num_valid_heads, 1) if self.num_people != "all" else 1    # pad at least one person
-                
+                if self.split == 'test':
+                    num_missing_heads = max(num_people_temporal_max + 1 - num_valid_heads, 1) # pad at least one person
+
                 # if len(gaze_pts)>0:
                     # Create (Normalized) Gaze Points
                     # gaze_pts[gaze_pts[:, 0] != -1.] /= torch.tensor([img_w, img_h])
@@ -434,7 +450,8 @@ class VideoLAEODataset_temporal(Dataset):
                 # Pad missing people (ie. heads, head_bboxes, gaze_pt and coatt)
                 if num_missing_heads > 0:
                     head_bboxes = torch.cat([torch.zeros((num_missing_heads, 4), dtype=torch.float32), head_bboxes])
-                    heads = torch.cat([torch.zeros((num_missing_heads, 3, 224, 224), dtype=torch.float32), heads])
+                    # heads = torch.cat([torch.zeros((num_missing_heads, 3, 224, 224), dtype=torch.float32), heads])
+                    heads = torch.cat([torch.zeros((num_missing_heads, 3, self.image_size[1], self.image_size[0]), dtype=torch.float32), heads])
                     gaze_pts = torch.cat([torch.zeros((num_missing_heads, 2), dtype=torch.float32)-1, gaze_pts])
                     inout = torch.cat([torch.zeros((num_missing_heads, ), dtype=torch.float32)-1, inout])
                     laeo_ids = torch.cat([torch.zeros((num_missing_heads, ), dtype=torch.long), laeo_ids])
@@ -497,6 +514,11 @@ class VideoLAEODataset_temporal(Dataset):
                 t_sample[key] = torch.stack(t_sample[key], axis=0).squeeze()
                 if self.temporal_context==0:
                     t_sample[key] = t_sample[key].unsqueeze(0)
+
+        # for GazeLLE compatibility
+        t_sample['bboxes'] = t_sample['head_bboxes']
+        t_sample['images'] = t_sample['image']
+
         return t_sample
 
     def __len__(self):
@@ -505,6 +527,11 @@ class VideoLAEODataset_temporal(Dataset):
         # self.use_ratio = 0.01
         # self.use_ratio = 0.2
         self.use_ratio = 1.0
+        
+        if self.split == 'test':
+            # return 10
+            self.use_ratio = 0.05
+
         return int(len(self.paths) * self.use_ratio)
 
 # ============================================================================================================ #
@@ -549,7 +576,8 @@ class VideoLAEODataModule(pl.LightningDataModule):
                         hue=None,
                         p=0.8,
                     ),
-                    Resize(img_size=(224, 224), head_size=(224, 224)),
+                    # Resize(img_size=(224, 224), head_size=(224, 224)),
+                    Resize(img_size=(self.cfg.data.image_size, self.cfg.data.image_size), head_size=(self.cfg.data.image_size, self.cfg.data.image_size)),
                     ToTensor(),
                     Normalize(
                         img_mean=IMG_MEAN,
@@ -571,7 +599,8 @@ class VideoLAEODataModule(pl.LightningDataModule):
 
             val_transform = Compose(
                 [
-                    Resize(img_size=(224, 224), head_size=(224, 224)),
+                    # Resize(img_size=(224, 224), head_size=(224, 224)),
+                    Resize(img_size=(self.cfg.data.image_size, self.cfg.data.image_size), head_size=(self.cfg.data.image_size, self.cfg.data.image_size)),
                     ToTensor(),
                     Normalize(
                         img_mean=IMG_MEAN,
@@ -594,7 +623,8 @@ class VideoLAEODataModule(pl.LightningDataModule):
         elif stage == "validate":
             val_transform = Compose(
                 [
-                    Resize(img_size=(224, 224), head_size=(224, 224)),
+                    # Resize(img_size=(224, 224), head_size=(224, 224)),
+                    Resize(img_size=(self.cfg.data.image_size, self.cfg.data.image_size), head_size=(self.cfg.data.image_size, self.cfg.data.image_size)),
                     ToTensor(),
                     Normalize(
                         img_mean=IMG_MEAN,
@@ -617,7 +647,8 @@ class VideoLAEODataModule(pl.LightningDataModule):
         elif stage == "test":
             test_transform = Compose(
                 [
-                    Resize(img_size=(224,224), head_size=(224, 224)),
+                    # Resize(img_size=(224,224), head_size=(224, 224)),
+                    Resize(img_size=(self.cfg.data.image_size, self.cfg.data.image_size), head_size=(self.cfg.data.image_size, self.cfg.data.image_size)),
                     ToTensor(),
                     Normalize(
                         img_mean=IMG_MEAN,
@@ -641,7 +672,8 @@ class VideoLAEODataModule(pl.LightningDataModule):
         elif stage == "predict":
             predict_transform = Compose(
                 [
-                    Resize(img_size=224, head_size=(224, 224)),
+                    # Resize(img_size=224, head_size=(224, 224)),
+                    Resize(img_size=(self.cfg.data.image_size, self.cfg.data.image_size), head_size=(self.cfg.data.image_size, self.cfg.data.image_size)),
                     ToTensor(),
                     Normalize(
                         img_mean=IMG_MEAN,
