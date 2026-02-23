@@ -71,23 +71,10 @@ class VideoLAEODataset_temporal(Dataset):
         # load annotations
         self.annotations, self.paths = self.load_annotations()
         
-        # load speaking status file
-        # self.df_speaking = self.load_annotations_speaker()
-        # self.df_speaking = self.df_speaking.groupby('path')
-        
     def load_annotations(self):
-        # Change to LAEO annotations
-        # annotation_files = sorted(glob(f"data/temp/agupta/data/UCO-LAEO/ucolaeodb/processed_annotations/{self.split}/*.csv"))
-
         annotation_path = f"data/VSGaze/uco_laeo_{self.split}.h5"
         annotations = pd.read_hdf(annotation_path)
 
-        # li = []
-        # for file in annotation_files:
-        #     df = pd.read_csv(file, sep=",")
-        #     li.append(df)
-        # annotations = pd.concat(li, axis=0, ignore_index=True)
-        
         # group by path
         annotations = annotations.groupby('path')
         paths = list(annotations.groups.keys())

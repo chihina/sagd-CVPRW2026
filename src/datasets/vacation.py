@@ -60,13 +60,8 @@ class VacationDataset(Dataset):
         
 
     def load_annotations(self):
-        
-        if self.split=='train':
-            annotations = pd.read_csv('/idiap/temp/agupta/data/VACATION/processed_csvs/train.csv')
-        elif self.split=='val':
-            annotations = pd.read_csv('/idiap/temp/agupta/data/VACATION/processed_csvs/val.csv')
-        elif self.split=='test':
-            annotations = pd.read_csv('/idiap/temp/agupta/data/VACATION/processed_csvs/test.csv')
+        annotation_path = os.path.join(self.root, 'processed_csvs', f'{self.split}.csv')
+        annotations = pd.read_csv(annotation_path)
 
         # group by path
         annotations = annotations.groupby('path')

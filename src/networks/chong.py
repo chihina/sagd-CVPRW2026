@@ -247,11 +247,7 @@ class GazeBaseline(nn.Module):
         super().__init__()
 
         self.gaze360 = GazeStatic()
-        # ckpt_path = "/idiap/temp/stafasca/projects/rinnegan/weights/gaze360_resnet18.pt"
-        # checkpoint = torch.load(ckpt_path, map_location="cuda")
-        # self.gaze360.load_state_dict(checkpoint["model_state_dict"], strict=True)
         self.gaze360.eval()
-        # print("Loaded gaze360 weights from {}".format(ckpt_path))
 
         self.adapter = nn.Conv2d(4, 3, kernel_size=1, stride=1, padding=0)
         backbone = models.resnet50(weights="IMAGENET1K_V2")

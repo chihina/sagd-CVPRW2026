@@ -82,13 +82,6 @@ class VideoCoAttDataset_temporal(Dataset):
         self.df_speaking = self.df_speaking.groupby('path')
         
     def load_annotations(self):
-        # annotation_files = sorted(glob(f"/idiap/project/ai4autism/data/VideoCoAtt/annotations/{self.split}/*.csv"))
-        # li = []
-        # for file in annotation_files:
-            # df = pd.read_csv(file, sep=",")
-            # li.append(df)
-        # annotations = pd.concat(li, axis=0, ignore_index=True)
-
         annotation_path = f"data/VSGaze/videocoatt_{self.split}.h5"
         annotations = pd.read_hdf(annotation_path)
                          

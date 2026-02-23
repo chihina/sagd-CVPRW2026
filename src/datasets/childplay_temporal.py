@@ -114,52 +114,10 @@ class ChildPlayDataset_temporal(Dataset):
 
         return os.path.exists(os.path.join(self.root, path))
 
-    # exclude_cls=['gaze_shift', 'inside_occluded', 'inside_uncertain', 'eyes_closed']
     def _load_annotations(self, exclude_cls=[]):
-        # files = glob(os.path.join(self.root, 'annotations', self.split, '*.csv'))
-        # li = []
-        # for file in files:
-        #     df = pd.read_csv(file)
-        #     li.append(df)
-        # annotations = pd.concat(li, axis=0, ignore_index=True)
-
         annotation_path = f"data/VSGaze/childplay_{self.split}.h5"
         annotations = pd.read_hdf(annotation_path)
-        
-        # if len(exclude_cls) > 0:
-            # cond = annotations.gaze_class.isin(exclude_cls)
-            # annotations = annotations[~cond].reset_index(drop=True)
-        
-        # Temporarily remove extra annotation for which there is no frame
-        # annotations = annotations.drop(annotations[(annotations['clip'] == '4yWavYq9_Ks_405-451') & (annotations.frame == 48)].index)
-        
-        # Change cases where gaze_class=='inside_visible' but gaze_x==-1 to gaze_class=='inside-uncertain'
-        # incorr_indices = annotations[(annotations['gaze_class']=='inside_visible') & (annotations['gaze_x'] == -1)].index
-        # annotations['gaze_class'][incorr_indices] = 'inside_uncertain'
-        
-        # Drop children or adults from the dataset
-        # print('ChildPlay subset: ', self.subset)
-        # if self.subset=='child':
-            # annotations = annotations.drop(annotations[(annotations['is_child']==0)].index)
-        # elif self.subset=='adult':
-            # annotations = annotations.drop(annotations[(annotations['is_child']==1)].index)
-        
-        # re-name head bbox annotations
-        # annotations = annotations.rename(columns={'bbox_x': 'head_xmin', 'bbox_y': 'head_ymin'})
-        # annotations['head_xmax'] = annotations['head_xmin'] + annotations['bbox_width']
-        # annotations['head_ymax'] = annotations['head_ymin'] + annotations['bbox_height']
-        
-        # merge with speaking status annotations
-        # df_gt_speaking = pd.read_csv('/idiap/temp/agupta/data/child-play/childplay_speaking.csv', index_col=0)
-        # annotations = annotations.merge(df_gt_speaking, on=['clip', 'frame', 'person_id'], how='left')
-        
-        # group by clip and frame
-        # annotations = annotations.groupby(['clip', 'frame'])
-        # keys = np.array(list(annotations.groups.keys()))
-        
-        # if self.stride > 1:
-            # index_keep = np.arange(len(keys), step=self.stride)
-            # keys = keys[index_keep]
+
         
         annotations = annotations.groupby('path')
         paths = list(annotations.groups.keys())
