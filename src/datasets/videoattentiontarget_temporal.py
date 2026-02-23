@@ -171,38 +171,6 @@ class VideoAttentionTargetDataset_temporal(Dataset):
             self.paths = paths_pruned
         """
     
-    def load_annotations_speaker(self):
-        annotation_files = glob(os.path.join('/idiap/temp/agupta/data/attention/videoatttarget/speaker/', f"*/*.csv"))
-
-        li = []
-        for file in annotation_files:
-            show, clip = file.split("/")[-2:]
-            clip = clip.split('.')[0]
-            df = pd.read_csv(file)
-
-            # add column for path
-            frame_names = glob(os.path.join(self.root, 'images', show, clip, '*.jpg'))
-            frame_names.sort()
-            paths = [os.path.join(show, clip, frame_names[int(f) - 1].split('/')[-1]) for f in df['frame'].values]
-            df['path'] = paths
-            
-            df["split"] = "train"
-            if show in VAL_SHOWS:
-                df["split"] = "val"
-            elif show in TEST_SHOWS:
-                df["split"] = "test"
-
-            li.append(df)
-        annotations = pd.concat(li, axis=0, ignore_index=True)
-
-        # Filter Annotations based on Split
-        annotations = annotations[annotations["split"] == self.split].reset_index(
-            drop=True
-        )
-
-        return annotations
-    
-
     def load_annotations(self):
         # annotation_files = glob(os.path.join(self.root, f"annotations/*/*/*/*.txt"))
 

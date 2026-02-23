@@ -49,7 +49,7 @@ def init_logger(cfg):
         id = wandb.util.generate_id()  # type: ignore
         logger = WandbLogger(
             project=cfg.project.name,
-            entity="chihiro-nakatani",
+            entity="user_entity",
             group=cfg.experiment.group,
             log_model=False,
             id=id,

@@ -98,14 +98,6 @@ class ChildPlayDataset_temporal(Dataset):
         # self.df_speaking_features = self.load_features_speaker()
         # self.df_speaking_features = self.df_speaking_features.groupby('path')
         
-        # ======== for VLM context =========
-        path_to_vlm = '/idiap/temp/pvuillecard/projects/nlp_vlm/experiments/2024-03-14/17-59-47/outputs/childplay_score_blip2_ensemble_text_prompt_swig.pkl'  # SWIG
-#         path_to_vlm = '/idiap/temp/pvuillecard/projects/nlp_vlm/experiments/2024-03-14/18-00-15/outputs/childplay_score_blip2_ensemble_text_prompt_ava.pkl'  # AVA + CP
-#         path_to_vlm = '/idiap/temp/pvuillecard/projects/nlp_vlm/experiments/2024-02-26/16-18-28/outputs/childplay_score_blip2_ensemble_text_prompt_hico.pkl'  # hico
-        # loaded_vlm_context = load_pkl(path_to_vlm)
-        # self.loaded_vlm_context = loaded_vlm_context
-        # del loaded_vlm_context
-
     def valid_data(self, path):
         # clip = path.split('/')[1]
         # video_id, interval = clip.rsplit('_', 1)
@@ -122,46 +114,6 @@ class ChildPlayDataset_temporal(Dataset):
 
         return os.path.exists(os.path.join(self.root, path))
 
-    def load_annotations_speaker(self):
-        annotation_files = glob(os.path.join('/idiap/temp/agupta/data/child-play/speaker_corr/', f"*.csv"))
-
-        li = []
-        for file in annotation_files:
-            clip = file.split('/')[-1]
-            clip = clip.split('.')[0]
-            df = pd.read_csv(file)
-
-            # add column for path
-            frame_names = glob(os.path.join(self.root, 'images', clip, '*.jpg'))
-            frame_names.sort(key=lambda f: int(f.split('_')[-1][:-4]))
-            paths = [os.path.join('images', clip, frame_names[int(f) - 1].split('/')[-1]) for f in df['frame'].values]
-            df['path'] = paths
-
-            li.append(df)
-        annotations = pd.concat(li, axis=0, ignore_index=True)
-
-        return annotations
-    
-    def load_features_speaker(self):
-        annotation_files = glob(os.path.join('/idiap/temp/agupta/data/child-play/speaking_features/', f"*.csv"))
-
-        li = []
-        for file in annotation_files:
-            clip = file.split('/')[-1]
-            clip = clip.split('.')[0]
-            df = pd.read_csv(file, names=['clip', 'frame', 'id', 'na_1', 'na_2', 'na_3', 'xmin', 'ymin', 'xmax', 'ymax', 'feat'])
-
-            # add column for path
-            frame_names = glob(os.path.join(self.root, 'images', clip, '*.jpg'))
-            frame_names.sort(key=lambda f: int(f.split('_')[-1][:-4]))
-            paths = [os.path.join('images', clip, frame_names[int(f) - 1].split('/')[-1]) for f in df['frame'].values]
-            df['path'] = paths
-
-            li.append(df)
-        annotations = pd.concat(li, axis=0, ignore_index=True)
-
-        return annotations
-        
     # exclude_cls=['gaze_shift', 'inside_occluded', 'inside_uncertain', 'eyes_closed']
     def _load_annotations(self, exclude_cls=[]):
         # files = glob(os.path.join(self.root, 'annotations', self.split, '*.csv'))

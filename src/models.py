@@ -33,10 +33,10 @@ from src.metrics import AUC, Distance, GFTestAUC, GFTestDistance, GroupCost, Gro
 from src.networks.chong import ChongNet, GazeBaseline, NoraNet
 # from src.networks.rinnegan import Rinnegan
 # from src.networks.rinnegan_multivit import MultiViTRinnegan
-from src.networks.sharingan import Sharingan
-from src.networks.sharingan_social import Sharingan_social
+# from src.networks.sharingan import Sharingan
+# from src.networks.sharingan_social import Sharingan_social
 from src.networks.interact_net_temporal import InteractNet
-from src.networks.geom_gaze import GeomGaze
+# from src.networks.geom_gaze import GeomGaze
 from src.utils import spatial_argmax2d
 # from src.utils import id_to_pairwise_coatt, id_to_pairwise_lah, id_to_pairwise_laeo
 # from src.utils import id_to_pairwise_coatt_vectorized, id_to_pairwise_laeo_vectorized, id_to_pairwise_lah_vectorized
@@ -60,27 +60,7 @@ class InteractModel(pl.LightningModule):
 
         self.model_name = cfg.model.model_name
         # Initialize model
-        if self.model_name=='sharingan_social':
-            self.model = Sharingan_social(    
-                patch_size=cfg.model.sharingan.patch_size,
-                token_dim=cfg.model.sharingan.token_dim,
-                image_size=cfg.model.sharingan.image_size,
-                gaze_feature_dim=cfg.model.sharingan.gaze_feature_dim,
-                encoder_depth=cfg.model.sharingan.encoder_depth,
-                encoder_num_heads=cfg.model.sharingan.encoder_num_heads,
-                encoder_num_global_tokens=cfg.model.sharingan.encoder_num_global_tokens,
-                encoder_mlp_ratio=cfg.model.sharingan.encoder_mlp_ratio,
-                encoder_use_qkv_bias=cfg.model.sharingan.encoder_use_qkv_bias,
-                encoder_drop_rate=cfg.model.sharingan.encoder_drop_rate,
-                encoder_attn_drop_rate=cfg.model.sharingan.encoder_attn_drop_rate,
-                encoder_drop_path_rate=cfg.model.sharingan.encoder_drop_path_rate,
-                decoder_feature_dim=cfg.model.sharingan.decoder_feature_dim,
-                decoder_hooks=cfg.model.sharingan.decoder_hooks,
-                decoder_hidden_dims=cfg.model.sharingan.decoder_hidden_dims,
-                decoder_use_bn=cfg.model.sharingan.decoder_use_bn,
-                output=cfg.model.sharingan.output
-            )
-        elif self.model_name=='gaze_interact':
+        if self.model_name=='gaze_interact':
             self.model = InteractNet(  
                 cfg=cfg,  
                 patch_size=cfg.model.sharingan.patch_size,
@@ -104,8 +84,6 @@ class InteractModel(pl.LightningModule):
                 vlm_dim=cfg.data.vlm_dim,
                 num_coatt=cfg.data.num_coatt,
             )
-        elif self.model_name=='geom_gaze':
-            self.model = GeomGaze(output_size=(cfg.data.heatmap_size[0],cfg.data.heatmap_size[1]))
 
         self.cfg = cfg
         self.output = cfg.model.sharingan.output

@@ -75,26 +75,6 @@ class VideoLAEODataset_temporal(Dataset):
         # self.df_speaking = self.load_annotations_speaker()
         # self.df_speaking = self.df_speaking.groupby('path')
         
-    def load_annotations_speaker(self):
-        annotation_files = glob(os.path.join('/idiap/temp/agupta/data/UCO-LAEO/speaker', f"*.csv"))
-
-        li = []
-        for file in annotation_files:
-            clip = file.split('/')[-1]
-            clip = clip.split('.')[0]
-            df = pd.read_csv(file)
-            
-            # add column for path
-            frame_names = glob(os.path.join(self.root, 'images_Idiap', 'frames', clip, '*.jpg'))
-            frame_names.sort()
-            paths = [os.path.join('frames', clip, frame_names[int(f) - 1].split('/')[-1]) for f in df['frame'].values]
-            df['path'] = paths
-
-            li.append(df)
-        annotations = pd.concat(li, axis=0, ignore_index=True)
-
-        return annotations
-
     def load_annotations(self):
         # Change to LAEO annotations
         # annotation_files = sorted(glob(f"data/temp/agupta/data/UCO-LAEO/ucolaeodb/processed_annotations/{self.split}/*.csv"))

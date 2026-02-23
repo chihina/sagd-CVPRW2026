@@ -81,26 +81,6 @@ class VideoCoAttDataset_temporal(Dataset):
         self.df_speaking = pd.DataFrame([['-1']], columns=['path'])
         self.df_speaking = self.df_speaking.groupby('path')
         
-    def load_annotations_speaker(self):
-        annotation_files = glob(os.path.join('/idiap/temp/agupta/data/VideoCoAtt/speaker', self.split, f"*.csv"))
-
-        li = []
-        for file in annotation_files:
-            clip = file.split('/')[-1]
-            clip = clip.split('.')[0]
-            df = pd.read_csv(file)
-
-            # add column for path
-            frame_names = glob(os.path.join(self.root, 'images_Idiap', self.split, clip, '*.jpg'))
-            frame_names.sort()
-            paths = [os.path.join(self.split, clip, frame_names[int(f) - 1].split('/')[-1]) for f in df['frame'].values]
-            df['path'] = paths
-
-            li.append(df)
-        annotations = pd.concat(li, axis=0, ignore_index=True)
-
-        return annotations
-
     def load_annotations(self):
         # annotation_files = sorted(glob(f"/idiap/project/ai4autism/data/VideoCoAtt/annotations/{self.split}/*.csv"))
         # li = []
