@@ -9,8 +9,6 @@ This repository supports multiple datasets (e.g., GazeFollow, VideoCoAtt, ChildP
 - `main.py`: primary entry point (Hydra-based)
 - `src/conf/train.yaml`: default configuration loaded by `main.py`
 - `src/experiments.py`: task and dataset dispatch (`train`, `val`, `test`, `predict`)
-- `checkpoints/`: saved model checkpoints
-- `lightning_logs/`: PyTorch Lightning logs
 
 ## Requirements
 
@@ -111,7 +109,6 @@ python main.py train.device=cpu wandb.log=False
 
 ## Weights and Checkpoints
 
-- `model.sharingan.gaze_weights` should point to a valid pretrained weight file.
 - If resuming training, set:
 	- `train.resume=True`
 	- `train.resume_from=/path/to/checkpoint.ckpt`
@@ -145,13 +142,7 @@ wandb login
 - A resolved config snapshot is saved with each run.
 - Lightning logs are written to `lightning_logs/`.
 
-## Troubleshooting
-
-- **Dataset not found**: verify all `data.*.root` overrides.
-- **Checkpoint/weights not found**: verify `model.sharingan.gaze_weights` and resume path.
-- **CUDA issues**: confirm CUDA availability or run with `train.device=cpu`.
-- **W&B auth errors**: set `wandb.log=False` or run `wandb login`.
-
 ## License
+It should be replaced after final acceptance.
 
-Add your license information here before public release.
+This codebase is based on https://github.com/idiap/MTGS.
