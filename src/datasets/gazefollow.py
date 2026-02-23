@@ -268,15 +268,6 @@ class GazeFollowDataset(Dataset):
         self.paths = self.paths[:int(len(self.paths) * use_ratio)]
 
         self.length = len(self.paths)
-        
-#         # ======== for VLM context =========
-# #         path_to_vlm = '/idiap/temp/pvuillecard/projects/nlp_vlm/results/gazefollow/gazefollow_ensemble.pkl' # AVA + CP
-#         path_to_vlm = '/idiap/temp/pvuillecard/projects/nlp_vlm/experiments/2024-03-01/15-41-58/outputs/gazefollow_score_blip2_ensemble_text_prompt_hico.pkl'
-# #         path_to_vlm = '/idiap/temp/pvuillecard/projects/nlp_vlm/experiments/2024-03-01/15-42-28/outputs/gazefollow_score_blip2_ensemble_text_prompt_swig.pkl'
-#         loaded_vlm_context = load_pkl(path_to_vlm)
-#         self.loaded_vlm_context = loaded_vlm_context
-# #         self.loaded_vlm_context = {f"{item['path']}_{item['split']}": item for item in loaded_vlm_context}
-#         del loaded_vlm_context
 
     def load_vlm_context(self, path, split):
         key = f"{path}_{split}"
@@ -390,33 +381,6 @@ class GazeFollowDataset(Dataset):
             head_bboxes = head_bboxes[rand_indices]
             gaze_pts = gaze_pts[rand_indices]
             inout = inout[rand_indices]
-        
-        '''
-        # Get detected head bboxes
-        split, folder, img_name = path.split("/")
-        basename, ext = os.path.splitext(img_name)
-        det_file = f"{split}/{folder}/{basename}-head-detections.npy"
-        det_head_bboxes = np.load(os.path.join("/idiap/temp/stafasca/data/GazeFollow-head", det_file))
-        
-        # Process detected head bboxes
-        if len(det_head_bboxes) > 0:
-            scores = torch.tensor(det_head_bboxes[:, -1])
-            det_head_bboxes = torch.tensor(det_head_bboxes[(scores >= self.head_thr).tolist(), :-1]).float()
-            # merge annotated head bboxes
-            ious = box_iou(det_head_bboxes, head_bboxes)
-            ious, index_ious = torch.max(ious, axis=1)
-            index_keep = ious < 0.3
-            det_head_bboxes = det_head_bboxes[index_keep]
-            # Shuffle detected people
-            if self.split == "train":
-                rand_indices = torch.randperm(det_head_bboxes.size(0))
-                det_head_bboxes = det_head_bboxes[rand_indices]
-            head_bboxes = torch.concat([det_head_bboxes, head_bboxes], axis=0)
-            # concat -1 for gaze and inout annotations
-            if self.split!='test':
-                gaze_pts = torch.cat([torch.zeros((len(det_head_bboxes), 2))-1, gaze_pts])
-                inout = torch.cat([torch.zeros(len(det_head_bboxes), dtype=torch.float32)-1, inout])
-        '''
 
 #         #--------------------------------------------------------------------------------
 #         # Match VLM scores with people

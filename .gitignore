@@ -233,5 +233,6 @@ pyproject.toml
 # Private experiment configs (anonymized public template is provided as src/conf/main.yaml)
 src/conf/*.yaml
 !src/conf/main.yaml
+src/visualize.py
 .nfs*
 analysis/*

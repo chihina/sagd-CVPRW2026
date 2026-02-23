@@ -1,8 +1,6 @@
 import math
 import sys
 
-sys.path.append("/idiap/temp/stafasca/repos/segment-anything")
-
 from functools import partial
 from typing import Dict, List, Optional, Tuple, Type, Union
 
