@@ -1,0 +1,145 @@
+# Public anonymized configuration template for repository release.
+# This file intentionally avoids personal paths and identifiers.
+# For local runs, copy this file to src/conf/train.yaml and replace /path/to/... values.
+
+project:
+  name: MTGS
+  version: 1.0.0
+  description: Modeling gaze and social interaction behavior
+
+experiment:
+  name: mtgs-public
+  group: null
+  task: train
+  dataset: gazefollow
+  path: ${hydra:runtime.cwd}
+  cuda: 0
+  add_info: none
+  exp_id: public
+
+data:
+  num_samples: 36000
+  num_people: 10
+  num_coatt: 40
+  return_depth: false
+  return_head_mask: false
+  image_size: 224
+  heatmap_size: 64
+  heatmap_sigma: 3
+  temporal_context: 2
+  temporal_stride: 3
+  vlm_dim: 24
+  gf:
+    root: /path/to/gazefollow_extended
+    root_depth: null
+    root_focal: null
+  coatt:
+    root: /path/to/VideoCoAtt_Dataset
+  vat:
+    root: /path/to/videoattentiontarget
+  laeo:
+    root: /path/to/ucolaeodb
+  childplay:
+    root: /path/to/ChildPlay-gaze
+    root_depth: null
+    root_focal: null
+  vacation:
+    root: /path/to/VACATION
+
+model:
+  model_name: gaze_interact
+  sharingan:
+    output: heatmap
+    patch_size: 16
+    token_dim: 768
+    image_size: ${data.image_size}
+    gaze_feature_dim: 512
+    encoder_depth: 12
+    encoder_num_heads: 12
+    encoder_num_global_tokens: 1
+    encoder_mlp_ratio: 4.0
+    encoder_use_qkv_bias: true
+    encoder_drop_rate: 0.0
+    encoder_attn_drop_rate: 0.0
+    encoder_drop_path_rate: 0.0
+    decoder_feature_dim: 128
+    decoder_hooks: [2, 5, 8, 11]
+    decoder_hidden_dims: [96, 192, 384, 768]
+    decoder_use_bn: true
+    gaze_weights: /path/to/gaze360_resnet18.pt
+    multivit_weights: false
+  interact:
+    person_token_type: normal
+  coatt_coatt_layer: self
+  coatt_person_layer: sep
+  coatt_image_layer: none
+  coatt_hm_type: coef_iter
+  coatt_coef_iter_cnt: 1
+  weights: false
+
+optimizer:
+  type: AdamW
+  lr: 1e-5
+  weight_decay: 1e-3
+
+scheduler:
+  type: StepLR
+  warmup_epochs: 4
+  t_0_epochs: 1000
+  t_mult: 1
+
+train:
+  seed: 101
+  matmul_precision: medium
+  precision: bf16-mixed
+  epochs: 100
+  batch_size: 16
+  accumulate_grad_batches: 1
+  device: cuda
+  resume: false
+  resume_from: null
+  freeze:
+    gaze_encoder: false
+    gaze_encoder_backbone: false
+    image_tokenizer: true
+    depth_tokenizer: false
+    vit_encoder: true
+    vit_adaptor: false
+    gaze_decoder: false
+    inout_decoder: false
+  swa:
+    use: false
+    lr: [1e-6, 1e-6, 1e-6, 1e-6, 3e-7]
+    epoch_start: 12
+    annealing_epochs: 6
+  coatt_loss: true
+  coatt_con_loss: true
+  level_loss_type: bce
+  social_loss: true
+
+val:
+  checkpoint: /path/to/best.ckpt
+  batch_size: 8
+  device: ${train.device}
+
+test:
+  checkpoint: /path/to/best.ckpt
+  batch_size: 1
+  device: ${train.device}
+
+predict:
+  root: ./demo
+  checkpoint: null
+  batch_size: 1
+  device: ${train.device}
+
+wandb:
+  log: false
+  watch: null
+  watch_freq: 500
+
+hydra:
+  run:
+    dir: ./
+  job:
+    chdir: true

@@ -229,3 +229,7 @@ mtgs_pyenv/
 visualizations_annotations
 uv.lock
 pyproject.toml
+
+# Private experiment configs (anonymized public template is provided as main.yaml)
+src/conf/*.yaml
+.nfs*
