@@ -58,13 +58,13 @@ You can either:
 
 ## Anonymous/Public Config Workflow
 
-For anonymous paper submission, private configs under `src/conf/*.yaml` are not tracked by Git. A shareable template is provided as `main.yaml` at the repository root.
+A shareable template is provided as `src/conf/main.yaml`.
 `main.yaml` is intentionally anonymized and contains `/path/to/...` placeholders by design.
 
 Use it like this:
 
 ```bash
-cp main.yaml src/conf/train.yaml
+cp src/conf/main.yaml src/conf/train.yaml
 ```
 
 Then update placeholders (e.g., `/path/to/...`) in your local `src/conf/train.yaml` and run:

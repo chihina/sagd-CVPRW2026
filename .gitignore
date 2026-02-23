@@ -230,7 +230,8 @@ visualizations_annotations
 uv.lock
 pyproject.toml
 
-# Private experiment configs (anonymized public template is provided as main.yaml)
+# Private experiment configs (anonymized public template is provided as src/conf/main.yaml)
 src/conf/*.yaml
+!src/conf/main.yaml
 .nfs*
 analysis/*
