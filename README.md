@@ -1,4 +1,4 @@
-# MTGS
+# Introduction
 
 Modeling gaze and social interaction cues with a Hydra + PyTorch Lightning training pipeline.
 
