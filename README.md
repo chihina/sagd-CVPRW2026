@@ -142,9 +142,23 @@ wandb login
 - A resolved config snapshot is saved with each run.
 - Lightning logs are written to `lightning_logs/`.
 
+## Citation
+
+```
+@inproceedings{DBLP:conf/cvpr/NakataniKU26,
+  author       = {Chihiro Nakatani and
+                  Norimichi Ukita and
+                  Jean-Marc Odobez},
+  title        = {End-to-End Shared Attention Estimation via Group Detection with Feedback Refinement},
+  booktitle    = {CVPRW},
+  year         = {2026},
+}
+```
+
 ## License
 It should be replaced after final acceptance.
 
 ## Acknowledgments
 
 This codebase is based on https://github.com/idiap/MTGS.
+Thank you for authors contributions.
