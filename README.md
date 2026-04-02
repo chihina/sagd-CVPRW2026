@@ -155,9 +155,6 @@ wandb login
 }
 ```
 
-## License
-It should be replaced after final acceptance.
-
 ## Acknowledgments
 
 This codebase is based on https://github.com/idiap/MTGS.
