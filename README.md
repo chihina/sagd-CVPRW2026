@@ -1,8 +1,20 @@
-# Introduction
+# End-to-End Shared Attention Estimation via Group Detection with Feedback Refinement
 
-Modeling gaze and social interaction cues with a Hydra + PyTorch Lightning training pipeline.
+**CVPR 2026 Workshop on Eye and Gaze in Computer Vision (GAZE 2026)**
 
-This repository supports multiple datasets (e.g., GazeFollow, VideoCoAtt, ChildPlay, VideoAttentionTarget, UCO-LAEO, and Combined Social) through a shared experiment interface.
+Chihiro Nakatani, Norimichi Ukita (Toyota Technological Institute), Jean-Marc Odobez (Idiap Research Institute / EPFL)
+
+[[Project Page]](https://chihina.github.io/sagd-CVPRW2026-page/) [[arXiv]](https://arxiv.org/abs/2604.01714) [[Code]](https://github.com/chihina/sagd-CVPRW2026)
+
+---
+
+## Overview
+
+This is the official implementation of our CVPRW 2026 paper. We propose a unified end-to-end approach for shared attention estimation via group detection with feedback refinement. Our method consists of three stages: individual attention estimation, initial shared attention generation through group detection, and refinement via feedback from initial attention predictions.
+
+Experiments on three datasets (VideoCoAtt, VideoAttentionTarget, ChildPlay) demonstrate superior performance in both group detection and shared attention localization over competing baselines.
+
+This codebase supports multiple datasets (e.g., GazeFollow, VideoCoAtt, ChildPlay, VideoAttentionTarget, UCO-LAEO, and Combined Social) through a shared experiment interface built on Hydra + PyTorch Lightning.
 
 ## Repository Structure
 
