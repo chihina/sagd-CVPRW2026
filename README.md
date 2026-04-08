@@ -4,6 +4,8 @@
 
 Chihiro Nakatani, Norimichi Ukita (Toyota Technological Institute), Jean-Marc Odobez (Idiap Research Institute / EPFL)
 
+In collaboration with Prof. Jean-Marc Odobez (Idiap Research Institute / EPFL)
+
 [[Project Page]](https://chihina.github.io/sagd-CVPRW2026-page/) [[arXiv]](https://arxiv.org/abs/2604.01714) [[Code]](https://github.com/chihina/sagd-CVPRW2026)
 
 ---
